@@ -123,9 +123,10 @@ func TestSC004_SingleFunctionPerformance(t *testing.T) {
 	// recover() to catch goroutine-scoped panics, issue #33) serializes
 	// SSA construction across transitive dependencies. Combined with
 	// parallel test execution during full suite runs (./...) which
-	// competes for CPU, we use a 10s threshold.
+	// competes for CPU, we use a 15s threshold. Raised from 10s after
+	// consistent ~11.5s runs on GitHub Actions ubuntu-latest runners.
 	// The 500ms target applies to production (non-race) builds.
-	const maxDuration = 10 * time.Second
+	const maxDuration = 15 * time.Second
 
 	testCases := []struct {
 		pkg      string
@@ -179,10 +180,10 @@ func TestSC004_SingleFunctionPerformance(t *testing.T) {
 func TestSC005_PackageAnalysisPerformance(t *testing.T) {
 	// SC-005: Package analysis < 5s for packages with up to 50
 	// exported functions. Each package should complete well within
-	// the threshold independently. Threshold raised to 10s to
+	// the threshold independently. Threshold raised to 15s to
 	// accommodate BuildSerially (issue #33) + race detector + CI
-	// contention.
-	const maxDuration = 10 * time.Second
+	// contention on GitHub Actions ubuntu-latest runners.
+	const maxDuration = 15 * time.Second
 
 	pkgNames := []string{"returns", "sentinel", "mutation", "p1effects", "p2effects"}
 	opts := analysis.Options{IncludeUnexported: true}
