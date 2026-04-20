@@ -47,6 +47,14 @@ type ReportSummary struct {
 
 // ReportPayload is the combined analysis data passed to the AI adapter
 // and written to stdout in --format=json mode.
+//
+// Dual serialization paths:
+//   - json.Marshal produces the full payload for --format=json output,
+//     preserving all fields (signals, worst offender lists, docscan content).
+//   - CompactForAI produces a reduced payload for the AI adapter text path,
+//     stripping large fields (docscan content, classification signals,
+//     worst offender lists) and replacing full SideEffect objects with ID
+//     strings to fit within model context windows.
 type ReportPayload struct {
 	// Summary holds pre-extracted threshold-relevant values, populated during
 	// pipeline execution. Used by EvaluateThresholds to avoid unmarshalling

@@ -96,10 +96,11 @@ func runJSONPath(payload *ReportPayload, opts RunnerOptions) error {
 func runTextPath(payload *ReportPayload, opts RunnerOptions) error {
 	_, _ = fmt.Fprintln(opts.Stderr, "Formatting report...")
 
-	payloadBytes, err := json.Marshal(payload)
+	payloadBytes, err := payload.CompactForAI()
 	if err != nil {
-		return fmt.Errorf("marshalling payload for AI adapter: %w", err)
+		return fmt.Errorf("compacting payload for AI adapter: %w", err)
 	}
+	_, _ = fmt.Fprintf(opts.Stderr, "Payload: %d bytes (compact)\n", len(payloadBytes))
 
 	timeout := opts.AdapterCfg.Timeout
 	if timeout <= 0 {
