@@ -436,7 +436,7 @@ Three GitHub Actions workflows:
 
 1. **Test** (`.github/workflows/test.yml`): Build + test with `-race -count=1` on push/PR to `main`.
 2. **MegaLinter** (`.github/workflows/mega-linter.yml`): Runs golangci-lint, revive, markdownlint, yamllint, and gitleaks on push/PR to `main`. Auto-commits lint fixes to PR branches.
-3. **Release** (`.github/workflows/release.yml`): Triggered on `v*` tag push. Runs GoReleaser v2 to build cross-platform binaries (darwin/linux x amd64/arm64), create GitHub Releases, and update the Homebrew cask in `unbound-force/homebrew-tap`.
+3. **Release** (`.github/workflows/release.yml`): Triggered via `workflow_dispatch` with a `tag` input (e.g., `v0.15.0`). A `preflight` job validates tag format, uniqueness, semver ordering, verifies CI checks passed on HEAD via the GitHub Checks API, confirms unreleased commits exist, then creates and pushes the annotated tag. The `release` job runs GoReleaser v2 to build cross-platform binaries (darwin/linux x amd64/arm64), create GitHub Releases, and update the Homebrew cask in `unbound-force/homebrew-tap`. To release: use the GitHub Actions "Run workflow" button or `gh workflow run release.yml -f tag=v1.2.3`.
 
 ## Linting
 
