@@ -58,6 +58,4 @@ homebrew_casks:
       Test quality analysis via side effect detection for Go
     binaries:
       - gaze
-    skip_upload: auto
-    commit_msg_template: >-
-      Brew cask update for {{ .ProjectName }} version {{ .Tag }}
+    skip_upload: true
