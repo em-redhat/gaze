@@ -135,6 +135,23 @@ func Load(path string) (*GazeConfig, error) {
 			cfg.Baseline.NewFunctionThreshold)
 	}
 
+	// Validate classification thresholds.
+	ct := cfg.Classification.Thresholds.Contractual
+	it := cfg.Classification.Thresholds.Incidental
+	if ct < 1 || ct > 99 {
+		return nil, fmt.Errorf(
+			"classification.thresholds.contractual must be in [1, 99], got %d", ct)
+	}
+	if it < 1 || it > 99 {
+		return nil, fmt.Errorf(
+			"classification.thresholds.incidental must be in [1, 99], got %d", it)
+	}
+	if ct <= it {
+		return nil, fmt.Errorf(
+			"classification.thresholds.contractual (%d) must be greater than incidental (%d)",
+			ct, it)
+	}
+
 	// Parse timeout string if provided.
 	if cfg.Classification.DocScan.TimeoutStr != "" {
 		d, err := time.ParseDuration(cfg.Classification.DocScan.TimeoutStr)
