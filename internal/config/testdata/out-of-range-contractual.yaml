@@ -1,0 +1,4 @@
+classification:
+  thresholds:
+    contractual: 500
+    incidental: 50

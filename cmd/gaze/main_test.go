@@ -649,9 +649,11 @@ func TestLoadConfig_YAMLInvertedThresholdsRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for inverted YAML thresholds, got nil")
 	}
-	// Error should reference the config file path, not CLI flags.
-	if !strings.Contains(err.Error(), "config file") {
-		t.Errorf("error should mention 'config file', got: %s", err)
+	// Error now comes from config.Load (threshold validation) rather
+	// than loadConfig's own coherence check, so it uses YAML field
+	// paths instead of "config file" source attribution.
+	if !strings.Contains(err.Error(), "classification.thresholds.contractual") {
+		t.Errorf("error should mention 'classification.thresholds.contractual', got: %s", err)
 	}
 }
 

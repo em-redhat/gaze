@@ -199,3 +199,131 @@ func TestBaselineConfig_InvalidThreshold(t *testing.T) {
 		t.Errorf("error = %q, want to contain %q", err, want)
 	}
 }
+
+func TestLoad_ContractualOutOfRange(t *testing.T) {
+	_, err := Load(filepath.Join("testdata", "out-of-range-contractual.yaml"))
+	if err == nil {
+		t.Fatal("expected error for contractual=500, got nil")
+	}
+
+	want := "classification.thresholds.contractual must be in [1, 99], got 500"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want to contain %q", err, want)
+	}
+}
+
+func TestLoad_IncidentalOutOfRange(t *testing.T) {
+	_, err := Load(filepath.Join("testdata", "out-of-range-incidental.yaml"))
+	if err == nil {
+		t.Fatal("expected error for incidental=200, got nil")
+	}
+
+	want := "classification.thresholds.incidental must be in [1, 99], got 200"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want to contain %q", err, want)
+	}
+}
+
+func TestLoad_ZeroContractual(t *testing.T) {
+	_, err := Load(filepath.Join("testdata", "zero-contractual.yaml"))
+	if err == nil {
+		t.Fatal("expected error for contractual=0, got nil")
+	}
+
+	want := "classification.thresholds.contractual must be in [1, 99], got 0"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want to contain %q", err, want)
+	}
+}
+
+func TestLoad_NegativeIncidental(t *testing.T) {
+	_, err := Load(filepath.Join("testdata", "negative-incidental.yaml"))
+	if err == nil {
+		t.Fatal("expected error for incidental=-10, got nil")
+	}
+
+	want := "classification.thresholds.incidental must be in [1, 99], got -10"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want to contain %q", err, want)
+	}
+}
+
+func TestLoad_InvertedThresholds(t *testing.T) {
+	_, err := Load(filepath.Join("testdata", "inverted-thresholds.yaml"))
+	if err == nil {
+		t.Fatal("expected error for inverted thresholds, got nil")
+	}
+
+	want := "classification.thresholds.contractual (40) must be greater than incidental (60)"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want to contain %q", err, want)
+	}
+}
+
+func TestLoad_EqualThresholds(t *testing.T) {
+	_, err := Load(filepath.Join("testdata", "equal-thresholds.yaml"))
+	if err == nil {
+		t.Fatal("expected error for equal thresholds, got nil")
+	}
+
+	want := "classification.thresholds.contractual (50) must be greater than incidental (50)"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want to contain %q", err, want)
+	}
+}
+
+func TestLoad_BoundaryValid(t *testing.T) {
+	cfg, err := Load(filepath.Join("testdata", "boundary-thresholds.yaml"))
+	if err != nil {
+		t.Fatalf("Load(boundary-thresholds) error: %v", err)
+	}
+
+	if cfg.Classification.Thresholds.Contractual != 99 {
+		t.Errorf("contractual = %d, want 99",
+			cfg.Classification.Thresholds.Contractual)
+	}
+	if cfg.Classification.Thresholds.Incidental != 1 {
+		t.Errorf("incidental = %d, want 1",
+			cfg.Classification.Thresholds.Incidental)
+	}
+}
+
+func TestLoad_AdjacentValid(t *testing.T) {
+	cfg, err := Load(filepath.Join("testdata", "adjacent-thresholds.yaml"))
+	if err != nil {
+		t.Fatalf("Load(adjacent-thresholds) error: %v", err)
+	}
+
+	if cfg.Classification.Thresholds.Contractual != 51 {
+		t.Errorf("contractual = %d, want 51",
+			cfg.Classification.Thresholds.Contractual)
+	}
+	if cfg.Classification.Thresholds.Incidental != 50 {
+		t.Errorf("incidental = %d, want 50",
+			cfg.Classification.Thresholds.Incidental)
+	}
+}
+
+func TestLoad_NegativeContractual(t *testing.T) {
+	_, err := Load(filepath.Join("testdata", "negative-contractual.yaml"))
+	if err == nil {
+		t.Fatal("expected error for contractual=-10, got nil")
+	}
+
+	want := "classification.thresholds.contractual must be in [1, 99], got -10"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want to contain %q", err, want)
+	}
+}
+
+func TestLoad_ZeroIncidental(t *testing.T) {
+	_, err := Load(filepath.Join("testdata", "zero-incidental.yaml"))
+	if err == nil {
+		t.Fatal("expected error for incidental=0, got nil")
+	}
+
+	want := "classification.thresholds.incidental must be in [1, 99], got 0"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want to contain %q", err, want)
+	}
+}
