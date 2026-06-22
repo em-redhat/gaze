@@ -37,6 +37,21 @@ type Options struct {
 	// during coverage analysis. If nil, warnings are suppressed.
 	Stderr io.Writer
 
+	// ComplexityProvider computes per-function cyclomatic complexity.
+	// Required — Analyze returns an error if nil.
+	ComplexityProvider ComplexityProvider
+
+	// LineCoverageProvider produces per-function line coverage data.
+	// Required — Analyze returns an error if nil.
+	LineCoverageProvider LineCoverageProvider
+
+	// ContractCoverageProvider builds a contract coverage lookup
+	// function for GazeCRAP scoring. When set, it takes precedence
+	// over ContractCoverageFunc. When nil, falls back to
+	// ContractCoverageFunc/SSADegradedPackages (deprecated path).
+	ContractCoverageProvider ContractCoverageProvider
+
+	// Deprecated: Use ContractCoverageProvider instead.
 	// ContractCoverageFunc is an optional function that returns
 	// contract coverage info for a given function. When provided,
 	// GazeCRAP scores, contract coverage, quadrant classifications,
@@ -44,6 +59,7 @@ type Options struct {
 	// If nil, GazeCRAP fields remain unavailable (FR-015).
 	ContractCoverageFunc func(pkg, function string) (ContractCoverageInfo, bool)
 
+	// Deprecated: Use ContractCoverageProvider instead.
 	// SSADegradedPackages lists package paths where SSA construction
 	// failed during quality analysis. Propagated to Summary so the
 	// CRAP JSON output indicates which packages have partial data.
