@@ -579,6 +579,9 @@ func TestLoadConfig_ContractualThresholdOverride(t *testing.T) {
 // TestLoadConfig_IncidentalThresholdOverride verifies that a positive
 // incidental threshold value is applied to the config.
 func TestLoadConfig_IncidentalThresholdOverride(t *testing.T) {
+	// Chdir to a temp dir without go.mod so FindModuleRoot falls back
+	// to DefaultConfig, isolating the test from the project's .gaze.yaml.
+	t.Chdir(t.TempDir())
 	cfg, err := loadConfig("", -1, 30)
 	if err != nil {
 		t.Fatalf("loadConfig error: %v", err)
@@ -614,6 +617,9 @@ func TestLoadConfig_BothThresholdsOverride(t *testing.T) {
 // TestLoadConfig_NoOverride verifies that -1 sentinel leaves
 // thresholds at their config/default values.
 func TestLoadConfig_NoOverride(t *testing.T) {
+	// Chdir to a temp dir without go.mod so FindModuleRoot falls back
+	// to DefaultConfig, isolating the test from the project's .gaze.yaml.
+	t.Chdir(t.TempDir())
 	cfg, err := loadConfig("", -1, -1)
 	if err != nil {
 		t.Fatalf("loadConfig error: %v", err)

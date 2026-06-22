@@ -149,7 +149,11 @@ func loadConfig(path string, contractualThresh, incidentalThresh int) (*config.G
 		if err != nil {
 			return config.DefaultConfig(), nil
 		}
-		path = filepath.Join(cwd, ".gaze.yaml")
+		configDir := cwd
+		if moduleRoot, findErr := loader.FindModuleRoot(cwd); findErr == nil {
+			configDir = moduleRoot
+		}
+		path = filepath.Join(configDir, ".gaze.yaml")
 	}
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -293,7 +297,15 @@ func runClassify(
 		logger.Debug("could not determine working directory for module load", "err", err)
 		cwd = ""
 	}
-	modResult, modErr := loader.LoadModule(cwd)
+	moduleRoot := cwd
+	if cwd != "" {
+		if root, findErr := loader.FindModuleRoot(cwd); findErr == nil {
+			moduleRoot = root
+		} else {
+			logger.Warn("could not find module root; classification signals may be degraded", "err", findErr)
+		}
+	}
+	modResult, modErr := loader.LoadModule(moduleRoot)
 	var modPkgs []*packages.Package
 	if modErr != nil {
 		// Non-fatal: module loading failure means caller analysis
@@ -723,9 +735,13 @@ If no coverage profile is provided, runs 'go test -coverprofile'
 automatically.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			moduleDir, err := os.Getwd()
+			cwd, err := os.Getwd()
 			if err != nil {
 				return fmt.Errorf("getting working directory: %w", err)
+			}
+			moduleDir, err := loader.FindModuleRoot(cwd)
+			if err != nil {
+				return fmt.Errorf("finding module root: %w", err)
 			}
 			opts := crap.DefaultOptions()
 			opts.CoverProfile = coverProfile
@@ -788,9 +804,13 @@ func runDocscan(p docscanParams) error {
 
 	// Determine the repo root: walk up from the package directory
 	// to find the go.mod file, defaulting to cwd.
-	repoRoot, err := os.Getwd()
+	cwd, err := os.Getwd()
 	if err != nil {
-		repoRoot = "."
+		cwd = "."
+	}
+	repoRoot := cwd
+	if root, findErr := loader.FindModuleRoot(cwd); findErr == nil {
+		repoRoot = root
 	}
 
 	// Resolve PackageDir from the import path if it corresponds
@@ -1185,27 +1205,6 @@ Requires the target package to have existing test files.`,
 	return cmd
 }
 
-// findModuleRoot walks up from the current working directory to find
-// the nearest directory containing a go.mod file (the module root).
-// This ensures self-check always analyzes the full module, even when
-// invoked from a subdirectory.
-func findModuleRoot() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("getting working directory: %w", err)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", fmt.Errorf("no go.mod found in %q or any parent directory", dir)
-		}
-		dir = parent
-	}
-}
-
 // selfCheckParams holds the parsed flags for the self-check command.
 type selfCheckParams struct {
 	format          string
@@ -1240,7 +1239,13 @@ func runSelfCheck(p selfCheckParams) error {
 
 	findRoot := p.moduleRootFunc
 	if findRoot == nil {
-		findRoot = findModuleRoot
+		findRoot = func() (string, error) {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return "", fmt.Errorf("getting working directory: %w", err)
+			}
+			return loader.FindModuleRoot(cwd)
+		}
 	}
 	moduleDir, err := findRoot()
 	if err != nil {
@@ -1372,6 +1377,10 @@ func runReport(p reportParams) error {
 	if err != nil {
 		cwd = "."
 	}
+	moduleDir, findErr := loader.FindModuleRoot(cwd)
+	if findErr != nil {
+		return fmt.Errorf("finding module root: %w", findErr)
+	}
 
 	timeout := p.aiTimeout
 	if timeout <= 0 {
@@ -1401,7 +1410,7 @@ func runReport(p reportParams) error {
 		// Load system prompt only in text mode (FR-015): in json mode the
 		// prompt file is never needed and a permission error must not block output.
 		var promptErr error
-		systemPrompt, promptErr = aireport.LoadPrompt(cwd)
+		systemPrompt, promptErr = aireport.LoadPrompt(moduleDir)
 		if promptErr != nil {
 			return fmt.Errorf("loading system prompt: %w", promptErr)
 		}
@@ -1411,7 +1420,7 @@ func runReport(p reportParams) error {
 
 	opts := aireport.RunnerOptions{
 		Patterns:        p.patterns,
-		ModuleDir:       cwd,
+		ModuleDir:       moduleDir,
 		Adapter:         adapter,
 		AdapterCfg:      adapterCfg,
 		SystemPrompt:    systemPrompt,

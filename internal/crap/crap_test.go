@@ -1559,3 +1559,110 @@ func TestAnalyze_RelativizesFilePaths(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ParseCoverProfile diagnostic tests (T018-T020)
+// ---------------------------------------------------------------------------
+
+func TestParseCoverProfile_AllUnresolved(t *testing.T) {
+	// Create a temp dir with a valid go.mod so FindModuleRoot succeeds,
+	// but profile entries reference a non-existent module.
+	dir := t.TempDir()
+	gomod := filepath.Join(dir, "go.mod")
+	if err := os.WriteFile(gomod, []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatalf("writing go.mod: %v", err)
+	}
+
+	profileContent := "mode: set\nnonexistent.com/pkg/file.go:1.1,5.2 1 1\n"
+	profilePath := filepath.Join(dir, "cover.out")
+	if err := os.WriteFile(profilePath, []byte(profileContent), 0o644); err != nil {
+		t.Fatalf("writing cover profile: %v", err)
+	}
+
+	var buf bytes.Buffer
+	_, err := ParseCoverProfile(profilePath, dir, &buf)
+	if err == nil {
+		t.Fatal("expected error when all profile entries fail to resolve, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to resolve") {
+		t.Errorf("error should mention 'failed to resolve', got: %v", err)
+	}
+}
+
+func TestParseCoverProfile_PartialUnresolved(t *testing.T) {
+	// Create a temp dir with a valid go.mod and one .go file that matches
+	// one profile entry, while a second entry is unresolvable.
+	dir := t.TempDir()
+	gomod := filepath.Join(dir, "go.mod")
+	if err := os.WriteFile(gomod, []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatalf("writing go.mod: %v", err)
+	}
+
+	// Create a Go source file that the first profile entry resolves to.
+	goFile := filepath.Join(dir, "main.go")
+	goSrc := "package main\n\nfunc main() {\n\tprintln(\"hello\")\n}\n"
+	if err := os.WriteFile(goFile, []byte(goSrc), 0o644); err != nil {
+		t.Fatalf("writing main.go: %v", err)
+	}
+
+	profileContent := "mode: set\n" +
+		"example.com/test/main.go:3.13,5.2 1 1\n" +
+		"nonexistent.com/other/file.go:1.1,5.2 1 1\n"
+	profilePath := filepath.Join(dir, "cover.out")
+	if err := os.WriteFile(profilePath, []byte(profileContent), 0o644); err != nil {
+		t.Fatalf("writing cover profile: %v", err)
+	}
+
+	var buf bytes.Buffer
+	results, err := ParseCoverProfile(profilePath, dir, &buf)
+	if err != nil {
+		t.Fatalf("expected no error for partial resolution, got: %v", err)
+	}
+	if len(results) == 0 {
+		t.Error("expected at least one resolved function coverage result")
+	}
+
+	// Stderr should contain a warning about the unresolved entry.
+	stderrOutput := buf.String()
+	if !strings.Contains(stderrOutput, "warning") {
+		t.Errorf("expected warning in stderr, got: %q", stderrOutput)
+	}
+	if !strings.Contains(stderrOutput, "nonexistent.com/other/file.go") {
+		t.Errorf("expected unresolved entry name in stderr, got: %q", stderrOutput)
+	}
+}
+
+func TestParseCoverProfile_WarningContent(t *testing.T) {
+	// Verify the warning message format includes the profile entry filename.
+	dir := t.TempDir()
+	gomod := filepath.Join(dir, "go.mod")
+	if err := os.WriteFile(gomod, []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatalf("writing go.mod: %v", err)
+	}
+
+	// Create a Go source file for the resolvable entry.
+	goFile := filepath.Join(dir, "main.go")
+	goSrc := "package main\n\nfunc main() {\n\tprintln(\"hello\")\n}\n"
+	if err := os.WriteFile(goFile, []byte(goSrc), 0o644); err != nil {
+		t.Fatalf("writing main.go: %v", err)
+	}
+
+	profileContent := "mode: set\n" +
+		"example.com/test/main.go:3.13,5.2 1 1\n" +
+		"bogus.io/missing/handler.go:10.1,20.2 3 0\n"
+	profilePath := filepath.Join(dir, "cover.out")
+	if err := os.WriteFile(profilePath, []byte(profileContent), 0o644); err != nil {
+		t.Fatalf("writing cover profile: %v", err)
+	}
+
+	var buf bytes.Buffer
+	_, err := ParseCoverProfile(profilePath, dir, &buf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	stderrOutput := buf.String()
+	if !strings.Contains(stderrOutput, "bogus.io/missing/handler.go") {
+		t.Errorf("warning should contain the profile entry filename 'bogus.io/missing/handler.go', got: %q", stderrOutput)
+	}
+}
