@@ -321,6 +321,9 @@ internal/
   docscan/             Documentation file scanner
   scaffold/            OpenCode file scaffolding (embed.FS)
   aireport/            AI-powered CI quality report pipeline (gaze report)
+  provider/
+    goprovider/        Go-specific provider implementations (gocyclo, go test, SSA)
+    mockprovider/      Mock providers for unit testing the scoring core
 ```
 
 All business logic lives under `internal/` and cannot be imported externally.
@@ -331,6 +334,7 @@ All business logic lives under `internal/` and cannot be imported externally.
 - **Testable CLI pattern**: Commands delegate to `runXxx(params)` functions. Params structs include `io.Writer` for stdout/stderr, enabling unit testing without subprocess execution.
 - **Options structs**: Configurable behavior uses options/params structs rather than long parameter lists.
 - **Tiered effect taxonomy**: Side effects are organized into priority tiers P0-P4.
+- **Provider interfaces**: Language-specific data acquisition (complexity, coverage, side effects, contract coverage) is abstracted behind interfaces in `internal/crap/provider.go`. Go implementations live in `internal/provider/goprovider/`, mock implementations in `internal/provider/mockprovider/`. This decouples the universal scoring engine from Go-specific tooling (gocyclo, go/packages, SSA).
 
 ## Coding Conventions
 
@@ -476,6 +480,7 @@ Formatters: gofmt, goimports.
 
 ## Recent Changes
 
+- provider-interfaces: Extracted four provider interfaces (`ComplexityProvider`, `LineCoverageProvider`, `SideEffectAnalyzer`, `ContractCoverageProvider`) into `internal/crap/provider.go` with language-neutral `FunctionComplexity` struct. Go-specific implementations in `internal/provider/goprovider/` wrap gocyclo, `go test -coverprofile`, `analysis.LoadAndAnalyze`, and `BuildContractCoverageFunc`. Mock implementations in `internal/provider/mockprovider/` enable unit testing of the universal scoring core with synthetic data. Refactored `crap.Analyze` to accept providers via `crap.Options` (with backward-compatible fallback to `ContractCoverageFunc`). Moved `generateCoverProfile`, `recoverPartialProfile`, and `testFileRegexp` from `internal/crap/analyze.go` to `internal/provider/goprovider/`. Exported `ResolvePatterns` from `crap/analyze.go` as shared utility. Removed direct `gocyclo` import from `internal/crap/`. Updated callers in `cmd/gaze/main.go` and `internal/aireport/runner.go` to construct Go providers.
 - p1-local-var-false-positives: Added scope-aware filtering to P1 effect detection in `internal/analysis/p1effects.go`. Added `unwrapToIdent` (expression unwrapping for `SelectorExpr`, `IndexExpr`, `StarExpr`, `ParenExpr`) and `isExternallyObservable` (scope check using `types.Object` pointer identity against signature variables). Added `collectSignatureVars` to build a set of parameter, named return, and receiver variable objects. Gated MapMutation, SliceMutation, ChannelSend, and ChannelClose emission behind `isExternallyObservable` — body-local variables no longer produce false positive P1 effects. Added `info *types.Info` parameter to `detectSendEffects`. Added 6 test fixtures (`LocalMapWrite`, `LocalSliceWrite`, `LocalChannelSend`, `LocalChannelClose`, `NamedReturnMapWrite`, `WriteToStructMap`) and 6 corresponding tests. All 9 existing P1 tests pass unchanged. Known limitations: slice aliasing, closure capture (documented in code comments).
 - ci-gate-integrity: Fixed three CI gate integrity bugs (#101, #108, #116) where "could not analyze" was silently reported as a passing result. (1) `generateCoverProfile` now preserves partial coverage profiles when `go test` exits non-zero but wrote usable data — warns instead of aborting. Extracted `recoverPartialProfile` helper in `internal/crap/analyze.go`. (2) Changed `crapStepResult.GazeCRAPload`, `ReportSummary.GazeCRAPload`, `compactSummary.GazeCRAPload` from `int` to `*int` across the report pipeline (`internal/aireport/`), preserving the nil/unavailable signal from `crap.Summary`. Changed `ThresholdResult.Actual` from `int` to `*int`. `EvaluateThresholds` now fails when `--max-gaze-crapload` is set but GazeCRAP data is unavailable. (3) Added zero-result gate failure in `runCrap` (`cmd/gaze/main.go`) and `Run()` (`internal/aireport/runner.go`) — gate commands exit non-zero when zero functions are analyzed and threshold flags were explicitly provided. Added `TotalFunctions` field to `crapStepResult` and `ReportSummary` for precise zero-result detection. Closes #101, #108, #116.
 - baseline-comparison: Added `--baseline` flag to `gaze crap`. Auto-detects `.gaze/baseline.json` for per-function CRAP/GazeCRAP regression detection. New `BaselineConfig` in `.gaze.yaml` for epsilon (0.5) and new-function threshold (30). `ComparisonResult`, `FunctionDelta`, `ComparisonSummary` types in `internal/crap/crap.go`. Comparison logic in `internal/crap/compare.go`, report output in `internal/crap/compare_report.go`. Exit code 1 on regression. Closes constitutional mandate (Principle III: cross-run comparability).
