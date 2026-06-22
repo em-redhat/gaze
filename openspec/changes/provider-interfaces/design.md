@@ -73,21 +73,28 @@ internal/provider/goprovider/
 
 This creates a clean import direction: `goprovider` imports `crap` (for interface types), `analysis`, `classify`, `quality`, `loader`, `gocyclo`. The `crap` package imports nothing from `goprovider` -- it only knows about the interfaces.
 
-**Decision**: `internal/provider/goprovider/` holds all Go-specific adapter code. `crap.Analyze` instantiates default Go providers when `Options` fields are nil, using a lazy import of `goprovider`.
+**Decision**: `internal/provider/goprovider/` holds all Go-specific adapter code. Default Go providers are constructed at call sites (`cmd/gaze/main.go`, `internal/aireport/runner.go`) and passed via `crap.Options`, keeping `crap` free of `goprovider` imports.
 
 ### D3: Nil-means-default pattern for backward compatibility
 
+Default Go provider construction happens at **call sites** (the CLI layer), not inside `crap.Analyze`. This keeps the `crap` package free of transitive Go-specific imports:
+
 ```go
-// In crap.Analyze():
-complexityProv := opts.ComplexityProvider
-if complexityProv == nil {
-    complexityProv = goprovider.NewComplexityProvider()
+// In cmd/gaze/main.go (runCrap):
+opts := crap.Options{
+    ComplexityProvider:   goprovider.NewComplexityProvider(),
+    LineCoverageProvider: goprovider.NewLineCoverageProvider(stderr),
+    // ContractCoverageProvider set separately if needed
 }
 ```
 
-All existing callers (`runCrap`, `runReport`, pipeline steps) pass `Options` without setting provider fields. Nil providers trigger default Go behavior. This ensures zero code changes at call sites for backward compatibility.
+The `crap.Analyze` function requires non-nil providers — callers must construct them. This achieves true import decoupling: `internal/crap/` imports only `internal/taxonomy/` and standard library types, never `goprovider`, `analysis`, `classify`, `quality`, `loader`, or `gocyclo`.
 
-**Decision**: Provider fields in `crap.Options` are optional interface values. Nil = Go default. This follows the established pattern of `ContractCoverageFunc` (already a nullable callback in `crap.Options`).
+For backward compatibility during transition, if a provider field is nil, `crap.Analyze` returns an error indicating the provider is required. Existing callers (`runCrap`, `runReport`) are updated to construct providers explicitly.
+
+**Decision**: Provider fields in `crap.Options` are required interface values. Callers construct the appropriate provider for their context (Go callers use `goprovider`, future external analyzers use protocol adapters). This follows the established dependency injection pattern but inverts the nil-default — callers are explicit about their data sources.
+
+**Note**: Phase 1 achieves true import decoupling — `internal/crap/` has zero transitive dependency on Go-specific analysis packages. This is a stronger separation than the alternative of nil-means-default inside `Analyze`, which would re-introduce transitive coupling through `goprovider` imports.
 
 ### D4: `FunctionComplexity` replaces `gocyclo.Stat` in `computeScores`
 
@@ -115,6 +122,8 @@ For the Go implementation, this means `GoSideEffectAnalyzer.Analyze()` calls `an
 
 This simplifies the interface surface -- one method, one return type -- and avoids a separate `ClassificationSignalProvider` interface. External analyzers in Phase 2 can implement classification using whatever signals make sense for their language.
 
+**Note**: `SideEffectAnalyzer` is intentionally NOT a field on `crap.Options`. It is consumed only by `ContractCoverageProvider` implementations as a composition dependency (the quality pipeline needs side effect data as input). `crap.Analyze` never calls side effect analysis directly — it receives pre-computed contract coverage via the `ContractCoverageProvider` lookup function. Adding `SideEffectAnalyzer` to `crap.Options` would create a misleading API surface where callers could set it but it would be ignored by `Analyze`.
+
 ### D6: ContractCoverageProvider encapsulates the quality pipeline
 
 The current `BuildContractCoverageFunc` is the deepest coupling point. It orchestrates:
@@ -135,7 +144,19 @@ The Go implementation wraps the existing `BuildContractCoverageFunc` logic. This
 
 ### D7: `ContractCoverageFunc` and `SSADegradedPackages` remain in Options
 
-For backward compatibility during transition, the existing `ContractCoverageFunc` and `SSADegradedPackages` fields in `crap.Options` are kept. When `ContractCoverageProvider` is set, it takes precedence. When nil, the system falls back to `ContractCoverageFunc`/`SSADegradedPackages` (existing behavior). This prevents breaking any current callers during the transition.
+For backward compatibility during transition, the existing `ContractCoverageFunc` and `SSADegradedPackages` fields in `crap.Options` are kept. When `ContractCoverageProvider` is set, it takes precedence. When nil, the system falls back to `ContractCoverageFunc`/`SSADegradedPackages` (existing behavior). This prevents breaking any current callers during the transition. Both fields should be marked with `// Deprecated:` GoDoc comments pointing to `ContractCoverageProvider`. Removal is deferred to Phase 2.
+
+### D8: `buildCoverMap` and `coverMaps` remain in `crap/analyze.go`
+
+The `coverMaps` type and `buildCoverMap` function MUST remain in `crap/analyze.go`. They convert provider output (`[]FuncCoverage`) into the internal lookup format consumed by `computeScores`. The `LineCoverageProvider` returns `[]FuncCoverage`; the consumer (`crap.Analyze`) builds its own lookup structures. This is a consumer-side concern, not a provider concern.
+
+### D9: `resolvePatterns` stays in `crap/analyze.go` as shared utility
+
+The `resolvePatterns` function converts package patterns to absolute file paths. It is used by both `GoComplexityProvider` and `GoLineCoverageProvider`. Rather than duplicating it or exporting it from `goprovider`, it remains in `crap/analyze.go` as an exported utility (`ResolvePatterns`) that both Go providers can call. The `testFileRegexp` moves to `goprovider/complexity.go` since it is specific to Go complexity analysis.
+
+### D10: Tasks 2.3 and 2.4 are atomic
+
+Changing `computeScores` to accept `[]FunctionComplexity` (Task 2.3) and updating `crap.Analyze` to produce `FunctionComplexity` via providers (Task 2.4) MUST be done in the same commit. An intermediate state where `computeScores` accepts `FunctionComplexity` but `Analyze` still produces `gocyclo.Stat` would create a compile error.
 
 ## Risks / Trade-offs
 
@@ -151,11 +172,11 @@ For backward compatibility during transition, the existing `ContractCoverageFunc
 
 **Mitigation**: The adapters are thin wrappers. The total new code is small relative to the coupling it eliminates. The alternative (keeping monolithic coupling) blocks multi-language support entirely.
 
-### R3: Partial abstraction
+### R3: Call-site provider construction
 
-**Risk**: The `crap` package still imports `goprovider` for default construction. This isn't a clean plugin architecture -- the Go provider is "blessed."
+**Risk**: Every caller of `crap.Analyze` must now construct providers explicitly. This is slightly more verbose than the current API.
 
-**Mitigation**: Acceptable for Phase 1. Phase 2 (protocol spec) introduces external provider construction via JSON-RPC. The blessed default is the right pattern for a single-language tool that is evolving toward multi-language. Full plugin isolation is over-engineering at this stage.
+**Mitigation**: There are only two production call sites (`cmd/gaze/main.go:runCrap` and `internal/aireport/runner.go`). Both already construct `crap.Options` with multiple fields. Adding provider construction is a minor change. The benefit (true import decoupling of the `crap` package) outweighs the verbosity cost.
 
 ### R4: `isGeneratedFile` filtering
 

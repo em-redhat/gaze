@@ -16,6 +16,12 @@ The `crap` package MUST define a `ComplexityProvider` interface with an `Analyze
 - **WHEN** `crap.Analyze` runs with this provider
 - **THEN** the resulting CRAP scores match `Formula(complexity, coverage)` for each function
 
+#### Scenario: Complexity provider returns error
+
+- **GIVEN** a `ComplexityProvider` that returns an error
+- **WHEN** `crap.Analyze` runs with this provider
+- **THEN** `crap.Analyze` MUST return the error with context wrapping and produce no scores
+
 ---
 
 ### Requirement: LineCoverageProvider Interface
@@ -32,7 +38,19 @@ The `crap` package MUST define a `LineCoverageProvider` interface with a `Covera
 
 - **GIVEN** the `GoLineCoverageProvider` and no cover profile path
 - **WHEN** `Coverage` is called
-- **THEN** the provider internally runs `go test -coverprofile` and returns parsed coverage data
+- **THEN** the returned `[]FuncCoverage` is non-empty, each entry has a non-empty File and Function, and Coverage values are between 0.0 and 100.0
+
+#### Scenario: Coverage provider returns error
+
+- **GIVEN** a `LineCoverageProvider` that returns an error
+- **WHEN** `crap.Analyze` runs with this provider
+- **THEN** `crap.Analyze` MUST return the error with context wrapping and produce no scores
+
+#### Scenario: Go coverage provider handles partial profile
+
+- **GIVEN** the `GoLineCoverageProvider` and `go test` exits non-zero but produces a partial coverage profile
+- **WHEN** `Coverage` is called
+- **THEN** the provider MUST recover partial coverage data and return it with no error, logging a warning to Stderr
 
 ---
 
@@ -45,6 +63,14 @@ The `crap` package MUST define a `SideEffectAnalyzer` interface with an `Analyze
 - **GIVEN** the `GoSideEffectAnalyzer` wrapping `analysis.LoadAndAnalyze` and `classify.Classify`
 - **WHEN** `Analyze` is called with a Go package path
 - **THEN** every `SideEffect` in the returned results has a non-zero `Classification` with a valid `Label` (contractual, ambiguous, or incidental)
+
+#### Scenario: Side effect analyzer returns error for invalid package
+
+- **GIVEN** a `SideEffectAnalyzer` and an invalid package path
+- **WHEN** `Analyze` is called
+- **THEN** an error MUST be returned and the results MUST be nil
+
+Note: `SideEffectAnalyzer` is NOT a field on `crap.Options`. It is consumed only by `ContractCoverageProvider` implementations as a composition dependency. See design decision D5.
 
 ---
 
@@ -64,15 +90,21 @@ The `crap` package MUST define a `ContractCoverageProvider` interface with a `Bu
 - **WHEN** `crap.Analyze` runs with this provider
 - **THEN** the resulting `Score.ContractCoverageReason` field carries `"all_effects_ambiguous"` through to output
 
+#### Scenario: Contract coverage provider returns error
+
+- **GIVEN** a `ContractCoverageProvider` whose `Build` method returns an error
+- **WHEN** `crap.Analyze` runs with this provider
+- **THEN** `crap.Analyze` MUST continue without GazeCRAP scores (graceful degradation), using only line coverage for CRAP computation, consistent with the current behavior when `ContractCoverageFunc` is nil
+
 ---
 
 ### Requirement: Provider Fields in crap.Options
 
-`crap.Options` MUST include optional provider fields: `ComplexityProvider`, `LineCoverageProvider`, and `ContractCoverageProvider`. When any provider field is nil, `crap.Analyze` MUST use the default Go implementation. The existing `ContractCoverageFunc` and `SSADegradedPackages` fields MUST be preserved for backward compatibility. When `ContractCoverageProvider` is set, it MUST take precedence over `ContractCoverageFunc`.
+`crap.Options` MUST include provider fields: `ComplexityProvider`, `LineCoverageProvider`, and `ContractCoverageProvider`. Callers MUST construct and provide these providers explicitly. The `SideEffectAnalyzer` interface is intentionally excluded from `crap.Options` — it is consumed only by `ContractCoverageProvider` implementations as a composition dependency (see D5). The existing `ContractCoverageFunc` and `SSADegradedPackages` fields MUST be preserved for backward compatibility with `// Deprecated:` GoDoc comments. When `ContractCoverageProvider` is set, it MUST take precedence over `ContractCoverageFunc`.
 
-#### Scenario: Nil providers use Go defaults
+#### Scenario: Callers provide Go providers
 
-- **GIVEN** `crap.Options` with all provider fields set to nil
+- **GIVEN** `crap.Options` with `ComplexityProvider` and `LineCoverageProvider` set to Go provider implementations
 - **WHEN** `crap.Analyze` runs on a Go package
 - **THEN** output is byte-identical to the current implementation
 
@@ -112,13 +144,13 @@ The file containing provider interface definitions (`internal/crap/provider.go`)
 
 ### Requirement: crap.Analyze internal dispatch
 
-`crap.Analyze` MUST check provider fields in `Options` before calling Go-specific analysis functions. When a provider is set, it MUST call the provider method. When nil, it MUST instantiate and call the default Go provider. The external behavior (output, exit codes, error messages) MUST remain identical. (Previously: `crap.Analyze` directly called `gocyclo.Analyze()`, `generateCoverProfile()`, `ParseCoverProfile()`, and used `ContractCoverageFunc` from Options.)
+`crap.Analyze` MUST use the provider fields in `Options` for complexity, coverage, and contract coverage data. Callers MUST construct providers and pass them via `Options`. The external behavior (output, exit codes, error messages) MUST remain identical when Go providers are used. (Previously: `crap.Analyze` directly called `gocyclo.Analyze()`, `generateCoverProfile()`, `ParseCoverProfile()`, and used `ContractCoverageFunc` from Options.)
 
-#### Scenario: Provider dispatch with nil defaults
+#### Scenario: Go providers produce identical output
 
-- **GIVEN** `crap.Options` with all provider fields set to nil
+- **GIVEN** `crap.Options` with Go provider implementations constructed by the caller
 - **WHEN** `crap.Analyze` runs on a Go package
-- **THEN** the default Go providers MUST be instantiated internally and output MUST be byte-identical to the current implementation
+- **THEN** output MUST be byte-identical to the pre-refactoring implementation
 
 #### Scenario: Provider dispatch with custom provider
 
