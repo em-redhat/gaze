@@ -127,6 +127,12 @@ func TestAnalyzeP1Effects_Direct_HTTPResponseWrite(t *testing.T) {
 	if !hasEffect(effects, taxonomy.HTTPResponseWrite) {
 		t.Error("expected HTTPResponseWrite effect for HandleHTTP")
 	}
+	// http.ResponseWriter embeds io.Writer, but the more specific
+	// HTTPResponseWrite classification must take precedence — no
+	// duplicate WriterOutput should be emitted (issue #131).
+	if hasEffect(effects, taxonomy.WriterOutput) {
+		t.Error("http.ResponseWriter.Write must not produce WriterOutput (HTTPResponseWrite takes precedence)")
+	}
 	for _, e := range effects {
 		if e.Type == taxonomy.HTTPResponseWrite {
 			if e.Tier != taxonomy.TierP1 {

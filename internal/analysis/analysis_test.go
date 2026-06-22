@@ -663,6 +663,12 @@ func TestP1_HTTPResponseWrite(t *testing.T) {
 	if !hasEffect(result.SideEffects, taxonomy.HTTPResponseWrite) {
 		t.Error("expected HTTPResponseWrite for HandleHTTP")
 	}
+	// http.ResponseWriter embeds io.Writer, but the more specific
+	// HTTPResponseWrite classification must take precedence — no
+	// duplicate WriterOutput should be emitted (issue #131).
+	if hasEffect(result.SideEffects, taxonomy.WriterOutput) {
+		t.Error("http.ResponseWriter.Write must not produce WriterOutput (HTTPResponseWrite takes precedence)")
+	}
 }
 
 func TestP1_MapMutation(t *testing.T) {

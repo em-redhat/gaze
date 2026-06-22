@@ -249,27 +249,13 @@ func detectP1CallEffects(
 	}
 
 	// Writer output and HTTP response writes via selector expressions.
+	// Check HTTP response writer first (more specific); fall through
+	// to generic io.Writer only when the receiver is not an
+	// http.ResponseWriter (issue #131).
 	if sel, ok := node.Fun.(*ast.SelectorExpr); ok {
-		if sel.Sel.Name == "Write" && isWriterType(info, sel.X) {
-			name := exprName(sel.X)
-			key := "writer:" + name
-			if !seen[key] {
-				seen[key] = true
-				loc := fset.Position(node.Pos()).String()
-				effects = append(effects, taxonomy.SideEffect{
-					ID:          taxonomy.GenerateID(pkg, funcName, string(taxonomy.WriterOutput), name),
-					Type:        taxonomy.WriterOutput,
-					Tier:        taxonomy.TierP1,
-					Location:    loc,
-					Description: fmt.Sprintf("writes to io.Writer '%s'", name),
-					Target:      name,
-				})
-			}
-		}
-
-		// HTTP response writes: calls to
-		// ResponseWriter.Write, .WriteHeader, .Header.
 		if isHTTPResponseWriter(info, sel.X) {
+			// HTTP response writes: calls to
+			// ResponseWriter.Write, .WriteHeader, .Header.
 			method := sel.Sel.Name
 			if method == "Write" || method == "WriteHeader" || method == "Header" {
 				name := exprName(sel.X)
@@ -286,6 +272,21 @@ func detectP1CallEffects(
 						Target:      name + "." + method,
 					})
 				}
+			}
+		} else if sel.Sel.Name == "Write" && isWriterType(info, sel.X) {
+			name := exprName(sel.X)
+			key := "writer:" + name
+			if !seen[key] {
+				seen[key] = true
+				loc := fset.Position(node.Pos()).String()
+				effects = append(effects, taxonomy.SideEffect{
+					ID:          taxonomy.GenerateID(pkg, funcName, string(taxonomy.WriterOutput), name),
+					Type:        taxonomy.WriterOutput,
+					Tier:        taxonomy.TierP1,
+					Location:    loc,
+					Description: fmt.Sprintf("writes to io.Writer '%s'", name),
+					Target:      name,
+				})
 			}
 		}
 	}
