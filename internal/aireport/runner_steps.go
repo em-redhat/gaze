@@ -39,18 +39,18 @@ type crapStepResult struct {
 // reads the supplied file directly instead of spawning go test internally
 // (FR-001, FR-002). An empty string uses the default internal generation path.
 //
-// contractCoverageFunc is an optional callback for GazeCRAP scoring. When
-// non-nil, it is set on crap.Options.ContractCoverageFunc, enabling
+// ccProvider is an optional ContractCoverageProvider for GazeCRAP scoring.
+// When non-nil, it is set on crap.Options.ContractCoverageProvider, enabling
 // GazeCRAP scores, quadrant classification, and GazeCRAPload computation.
 // When nil, only line-coverage-based CRAP scores are produced (spec 022).
-func runCRAPStep(patterns []string, moduleDir string, coverProfile string, stderr io.Writer, contractCoverageFunc func(string, string) (crap.ContractCoverageInfo, bool)) (*crapStepResult, error) {
+func runCRAPStep(patterns []string, moduleDir string, coverProfile string, stderr io.Writer, ccProvider crap.ContractCoverageProvider) (*crapStepResult, error) {
 	opts := crap.DefaultOptions()
 	opts.CoverProfile = coverProfile
 	opts.Stderr = stderr
 	opts.ComplexityProvider = goprovider.NewComplexityProvider()
 	opts.LineCoverageProvider = goprovider.NewLineCoverageProvider(stderr)
-	if contractCoverageFunc != nil {
-		opts.ContractCoverageFunc = contractCoverageFunc
+	if ccProvider != nil {
+		opts.ContractCoverageProvider = ccProvider
 	}
 
 	rpt, err := crap.Analyze(patterns, moduleDir, opts)

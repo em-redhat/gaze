@@ -451,17 +451,26 @@ func runCrap(p crapParams) error {
 	}
 
 	// Wire the quality pipeline to provide contract coverage for
-	// GazeCRAP scoring. This is best-effort: if quality analysis
-	// fails for any package, GazeCRAP falls back to unavailable.
-	if p.opts.ContractCoverageFunc == nil {
-		var ccFunc func(string, string) (crap.ContractCoverageInfo, bool)
-		var degradedPkgs []string
-
+	// GazeCRAP scoring via ContractCoverageProvider. This is
+	// best-effort: if quality analysis fails for any package,
+	// GazeCRAP falls back to unavailable.
+	//
+	// ContractCoverageProvider takes precedence over the deprecated
+	// ContractCoverageFunc (D7). When neither is set, construct a
+	// GoContractCoverageProvider for the production path.
+	if p.opts.ContractCoverageProvider == nil && p.opts.ContractCoverageFunc == nil {
 		if p.coverageFunc != nil {
-			// Test override — use the injected coverage function.
-			ccFunc, degradedPkgs = p.coverageFunc(p.patterns, p.moduleDir, p.stderr)
+			// Test override — use the injected coverage function
+			// via the deprecated ContractCoverageFunc path.
+			ccFunc, degradedPkgs := p.coverageFunc(p.patterns, p.moduleDir, p.stderr)
+			if ccFunc != nil {
+				p.opts.ContractCoverageFunc = ccFunc
+			}
+			if len(degradedPkgs) > 0 {
+				p.opts.SSADegradedPackages = degradedPkgs
+			}
 		} else {
-			// Production path — build AI mapper if requested.
+			// Production path — construct GoContractCoverageProvider.
 			var aiMapperFn quality.AIMapperFunc
 			if p.aiMapper != "" {
 				var aiErr error
@@ -470,16 +479,9 @@ func runCrap(p crapParams) error {
 					return aiErr
 				}
 			}
-			ccFunc, degradedPkgs = crap.BuildContractCoverageFunc(
-				p.patterns, p.moduleDir, p.stderr, aiMapperFn,
+			p.opts.ContractCoverageProvider = goprovider.NewContractCoverageProvider(
+				p.stderr, aiMapperFn,
 			)
-		}
-
-		if ccFunc != nil {
-			p.opts.ContractCoverageFunc = ccFunc
-		}
-		if len(degradedPkgs) > 0 {
-			p.opts.SSADegradedPackages = degradedPkgs
 		}
 	}
 
