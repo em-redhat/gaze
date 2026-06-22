@@ -162,10 +162,45 @@ func Run(opts RunnerOptions) error {
 		return err
 	}
 
+	// Zero-result gate (#116): when the CRAP step succeeded but
+	// produced zero scores and any threshold is configured, fail
+	// before threshold evaluation. A CI gate that passes when
+	// nothing was measured provides false assurance.
+	if err := checkZeroResultGate(payload, opts.Thresholds); err != nil {
+		return err
+	}
+
 	if opts.Format == "json" {
 		return runJSONPath(payload, opts)
 	}
 	return runTextPath(payload, opts)
+}
+
+// checkZeroResultGate returns an error when the CRAP step succeeded
+// (no error recorded) but produced zero analyzed functions, and any
+// threshold is configured. This prevents CI gates from silently
+// passing when the package pattern matched nothing (#116).
+//
+// The check uses TotalFunctions == 0 as the "zero results" signal,
+// which distinguishes "no functions found" from "all functions are
+// healthy" (CRAPload == 0 with TotalFunctions > 0).
+func checkZeroResultGate(payload *ReportPayload, cfg ThresholdConfig) error {
+	if payload == nil {
+		return nil
+	}
+	// Only relevant when a threshold is configured.
+	if cfg.MaxCrapload == nil && cfg.MaxGazeCrapload == nil && cfg.MinContractCoverage == nil {
+		return nil
+	}
+	// Only relevant when the CRAP step succeeded (no error).
+	if payload.Errors.CRAP != nil {
+		return nil
+	}
+	// Check for zero results: no functions were analyzed.
+	if payload.Summary.TotalFunctions != 0 {
+		return nil
+	}
+	return fmt.Errorf("no functions analyzed — cannot evaluate thresholds (check package patterns)")
 }
 
 // evaluateAndPrintThresholds evaluates cfg thresholds against payload and
@@ -178,7 +213,11 @@ func evaluateAndPrintThresholds(cfg ThresholdConfig, payload *ReportPayload, std
 		if !r.Passed {
 			status = "FAIL"
 		}
-		_, _ = fmt.Fprintf(stderr, "%s: %d/%d (%s)\n", r.Name, r.Actual, r.Limit, status)
+		actualStr := "N/A"
+		if r.Actual != nil {
+			actualStr = fmt.Sprintf("%d", *r.Actual)
+		}
+		_, _ = fmt.Fprintf(stderr, "%s: %s/%d (%s)\n", r.Name, actualStr, r.Limit, status)
 	}
 	if !allPassed {
 		return fmt.Errorf("one or more quality thresholds failed")
@@ -256,6 +295,7 @@ func runProductionPipeline(patterns []string, moduleDir string, coverProfile str
 		payload.CRAP = crapRes.JSON
 		payload.Summary.CRAPload = crapRes.CRAPload
 		payload.Summary.GazeCRAPload = crapRes.GazeCRAPload
+		payload.Summary.TotalFunctions = crapRes.TotalFunctions
 	}
 
 	// Step 2: Quality analysis.

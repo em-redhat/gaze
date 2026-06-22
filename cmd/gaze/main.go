@@ -400,6 +400,13 @@ type crapParams struct {
 	stdout          io.Writer
 	stderr          io.Writer
 
+	// thresholdSet is true when any threshold flag was explicitly
+	// provided on the command line (via cmd.Flags().Changed). Used
+	// by the zero-result gate (#116): when thresholds are set but
+	// no functions were analyzed, runCrap returns an error instead
+	// of silently passing.
+	thresholdSet bool
+
 	// analyzeFunc overrides crap.Analyze for testing.
 	// When nil, the production crap.Analyze is called.
 	analyzeFunc func([]string, string, crap.Options) (*crap.Report, error)
@@ -475,6 +482,18 @@ func runCrap(p crapParams) error {
 	}
 
 	logger.Info("analysis complete", "functions", len(rpt.Scores))
+
+	// Zero-result gate (#116): when threshold flags are set but no
+	// functions were analyzed, return an error. A CI gate that passes
+	// when nothing was measured provides false assurance — the user
+	// likely misconfigured the package pattern. Without thresholds,
+	// warn and continue (exploratory/interactive use).
+	if len(rpt.Scores) == 0 {
+		if p.thresholdSet {
+			return fmt.Errorf("no functions analyzed — cannot evaluate thresholds (check package patterns)")
+		}
+		_, _ = fmt.Fprintln(p.stderr, "warning: no functions analyzed")
+	}
 
 	// FR-015: Warn when GazeCRAP is unavailable. GazeCRAP requires
 	// contract coverage data from `gaze quality`. If no
@@ -667,6 +686,10 @@ func checkCIThresholds(rpt *crap.Report, maxCrapload, maxGazeCrapload int) error
 		return fmt.Errorf("CRAPload %d exceeds maximum %d",
 			rpt.Summary.CRAPload, maxCrapload)
 	}
+	// When GazeCRAPload is nil, skip the check silently. gaze crap
+	// prints a "GazeCRAP unavailable" note separately (line ~502).
+	// This differs from gaze report's EvaluateThresholds which fails
+	// when the metric is unavailable — see #108.
 	if maxGazeCrapload > 0 && rpt.Summary.GazeCRAPload != nil &&
 		*rpt.Summary.GazeCRAPload > maxGazeCrapload {
 		return fmt.Errorf("GazeCRAPload %d exceeds maximum %d",
@@ -699,7 +722,7 @@ the threshold).
 If no coverage profile is provided, runs 'go test -coverprofile'
 automatically.`,
 		Args: cobra.MinimumNArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			moduleDir, err := os.Getwd()
 			if err != nil {
 				return fmt.Errorf("getting working directory: %w", err)
@@ -721,6 +744,7 @@ automatically.`,
 				baselinePath:    baselinePath,
 				stdout:          os.Stdout,
 				stderr:          os.Stderr,
+				thresholdSet:    cmd.Flags().Changed("max-crapload") || cmd.Flags().Changed("max-gaze-crapload"),
 			})
 		},
 	}
@@ -1190,6 +1214,11 @@ type selfCheckParams struct {
 	stdout          io.Writer
 	stderr          io.Writer
 
+	// thresholdSet is true when any threshold flag was explicitly
+	// provided on the command line (via cmd.Flags().Changed). Passed
+	// through to crapParams for the zero-result gate (#116).
+	thresholdSet bool
+
 	// moduleRootFunc overrides findModuleRoot for testing.
 	// When nil, the production findModuleRoot is called.
 	moduleRootFunc func() (string, error)
@@ -1227,6 +1256,7 @@ func runSelfCheck(p selfCheckParams) error {
 		moduleDir:       moduleDir,
 		stdout:          p.stdout,
 		stderr:          p.stderr,
+		thresholdSet:    p.thresholdSet,
 	}
 	cp.opts.Stderr = p.stderr
 
@@ -1253,13 +1283,14 @@ CRAPload and the worst offenders by CRAP score. GazeCRAP
 scores are included when contract coverage data is available
 (requires integration with the quality pipeline).`,
 		Args: cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSelfCheck(selfCheckParams{
 				format:          format,
 				maxCrapload:     maxCrapload,
 				maxGazeCrapload: maxGazeCrapload,
 				stdout:          os.Stdout,
 				stderr:          os.Stderr,
+				thresholdSet:    cmd.Flags().Changed("max-crapload") || cmd.Flags().Changed("max-gaze-crapload"),
 			})
 		},
 	}
@@ -1300,7 +1331,10 @@ type reportParams struct {
 // system prompt, and calls the 4-step analysis pipeline via aireport.Run.
 // In json mode it skips AI adapter validation entirely (FR-015).
 // Threshold evaluation runs after the pipeline and may set exit code 1.
-func runReport(p reportParams) error {
+// validateReportParams checks pre-flight conditions for gaze report:
+// adapter requirement in text mode, ollama model requirement, and
+// coverprofile path validity.
+func validateReportParams(p reportParams) error {
 	// In text mode, --ai is required (FR-002).
 	if p.format != "json" && p.adapterName == "" {
 		return fmt.Errorf(
@@ -1324,6 +1358,14 @@ func runReport(p reportParams) error {
 		if info.IsDir() {
 			return fmt.Errorf("--coverprofile %q is a directory, not a file", p.coverProfile)
 		}
+	}
+
+	return nil
+}
+
+func runReport(p reportParams) error {
+	if err := validateReportParams(p); err != nil {
+		return err
 	}
 
 	cwd, err := os.Getwd()

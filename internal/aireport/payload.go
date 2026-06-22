@@ -12,13 +12,19 @@ import "encoding/json"
 // the raw JSON fields. ReportSummary is internal to the pipeline; it is
 // NOT serialised to the --format=json output (json:"-").
 type ReportSummary struct {
+	// TotalFunctions is the total number of functions analyzed by the
+	// CRAP step. Zero means no functions were found (e.g., package
+	// pattern matched nothing). Used by the zero-result gate (#116).
+	TotalFunctions int
+
 	// CRAPload is the number of functions whose CRAP score meets or exceeds
 	// the configured threshold (from crap.Report.Summary.CRAPload).
 	CRAPload int
 
 	// GazeCRAPload is the number of Q4 functions (high complexity, low
-	// coverage) from crap.Report.Summary.GazeCRAPload.
-	GazeCRAPload int
+	// coverage) from crap.Report.Summary.GazeCRAPload. Nil means the
+	// metric was not computed (e.g., no contract coverage callback).
+	GazeCRAPload *int
 
 	// AvgContractCoverage is the average contract coverage percentage across
 	// all assessed packages (from quality.Summary.AvgContractCoverage).
@@ -114,7 +120,8 @@ type ThresholdResult struct {
 	Name string
 
 	// Actual is the measured value extracted from the ReportPayload.
-	Actual int
+	// Nil means the metric was unavailable (e.g., GazeCRAPload not computed).
+	Actual *int
 
 	// Limit is the configured threshold value.
 	Limit int

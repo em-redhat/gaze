@@ -870,6 +870,74 @@ func TestRunCrap_EmptyPatterns(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// runCrap zero-result gate tests (#116)
+// ---------------------------------------------------------------------------
+
+// stubEmptyReport returns a crap.Report with zero scores.
+func stubEmptyReport() *crap.Report {
+	return &crap.Report{
+		Scores:  []crap.Score{},
+		Summary: crap.Summary{},
+	}
+}
+
+func stubEmptyAnalyze(_ []string, _ string, _ crap.Options) (*crap.Report, error) {
+	return stubEmptyReport(), nil
+}
+
+// TestRunCrap_ZeroResults_ThresholdSet_ReturnsError verifies that when
+// crap.Analyze returns zero scores and a threshold flag was explicitly
+// set, runCrap returns a non-nil error (#116 zero-result gate).
+func TestRunCrap_ZeroResults_ThresholdSet_ReturnsError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := runCrap(crapParams{
+		patterns:     []string{"./..."},
+		format:       "text",
+		opts:         crap.DefaultOptions(),
+		maxCrapload:  5,
+		moduleDir:    ".",
+		thresholdSet: true,
+		stdout:       &stdout,
+		stderr:       &stderr,
+		analyzeFunc:  stubEmptyAnalyze,
+		coverageFunc: stubCoverageNil,
+	})
+	if err == nil {
+		t.Fatal("expected error when zero results and threshold set")
+	}
+	if !strings.Contains(err.Error(), "no functions analyzed") {
+		t.Errorf("expected 'no functions analyzed' in error, got: %s", err)
+	}
+	if !strings.Contains(err.Error(), "cannot evaluate thresholds") {
+		t.Errorf("expected 'cannot evaluate thresholds' in error, got: %s", err)
+	}
+}
+
+// TestRunCrap_ZeroResults_NoThreshold_ExitZero verifies that when
+// crap.Analyze returns zero scores and no threshold flag was set,
+// runCrap returns nil (exit 0) with a warning on stderr.
+func TestRunCrap_ZeroResults_NoThreshold_ExitZero(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := runCrap(crapParams{
+		patterns:     []string{"./..."},
+		format:       "text",
+		opts:         crap.DefaultOptions(),
+		moduleDir:    ".",
+		thresholdSet: false,
+		stdout:       &stdout,
+		stderr:       &stderr,
+		analyzeFunc:  stubEmptyAnalyze,
+		coverageFunc: stubCoverageNil,
+	})
+	if err != nil {
+		t.Fatalf("expected nil error when zero results and no threshold, got: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "warning: no functions analyzed") {
+		t.Errorf("expected 'warning: no functions analyzed' on stderr, got: %q", stderr.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
 // runSelfCheck fast unit tests (US3 — T017)
 // ---------------------------------------------------------------------------
 
@@ -1456,8 +1524,8 @@ func TestSC003_ThresholdEvaluation_Correctness(t *testing.T) {
 	if results[0].Name != "CRAPload" {
 		t.Errorf("expected result name 'CRAPload', got %q", results[0].Name)
 	}
-	if results[0].Actual != 3 {
-		t.Errorf("expected Actual=3, got %d", results[0].Actual)
+	if results[0].Actual == nil || *results[0].Actual != 3 {
+		t.Errorf("expected Actual=3, got %v", results[0].Actual)
 	}
 	if results[0].Limit != 10 {
 		t.Errorf("expected Limit=10, got %d", results[0].Limit)
@@ -1716,31 +1784,31 @@ func TestRunReport_ThresholdEnforcement(t *testing.T) {
 	}{
 		{
 			name:       "SC1: CRAPload exceeds max → fail",
-			payload:    &aireport.ReportPayload{Summary: aireport.ReportSummary{CRAPload: 13}},
+			payload:    &aireport.ReportPayload{Summary: aireport.ReportSummary{TotalFunctions: 20, CRAPload: 13}},
 			thresholds: aireport.ThresholdConfig{MaxCrapload: intPtr(10)},
 			expectFail: true,
 		},
 		{
 			name:       "SC2: CRAPload within max → pass",
-			payload:    &aireport.ReportPayload{Summary: aireport.ReportSummary{CRAPload: 8}},
+			payload:    &aireport.ReportPayload{Summary: aireport.ReportSummary{TotalFunctions: 20, CRAPload: 8}},
 			thresholds: aireport.ThresholdConfig{MaxCrapload: intPtr(10)},
 			expectFail: false,
 		},
 		{
 			name:       "SC3: avg coverage below min → fail",
-			payload:    &aireport.ReportPayload{Summary: aireport.ReportSummary{AvgContractCoverage: 40}},
+			payload:    &aireport.ReportPayload{Summary: aireport.ReportSummary{TotalFunctions: 20, AvgContractCoverage: 40}},
 			thresholds: aireport.ThresholdConfig{MinContractCoverage: intPtr(60)},
 			expectFail: true,
 		},
 		{
 			name:       "SC4: no thresholds → pass",
-			payload:    &aireport.ReportPayload{Summary: aireport.ReportSummary{CRAPload: 999}},
+			payload:    &aireport.ReportPayload{Summary: aireport.ReportSummary{TotalFunctions: 20, CRAPload: 999}},
 			thresholds: aireport.ThresholdConfig{},
 			expectFail: false,
 		},
 		{
 			name:       "SC5: max-crapload=0 with positive actual → fail",
-			payload:    &aireport.ReportPayload{Summary: aireport.ReportSummary{CRAPload: 1}},
+			payload:    &aireport.ReportPayload{Summary: aireport.ReportSummary{TotalFunctions: 20, CRAPload: 1}},
 			thresholds: aireport.ThresholdConfig{MaxCrapload: intPtr(0)},
 			expectFail: true,
 		},
@@ -1810,19 +1878,19 @@ func TestRunReport_GazeCRAPloadThresholds(t *testing.T) {
 	}{
 		{
 			name:            "SC6: GazeCRAPload > max → fail",
-			payload:         &aireport.ReportPayload{Summary: aireport.ReportSummary{GazeCRAPload: 5}},
+			payload:         &aireport.ReportPayload{Summary: aireport.ReportSummary{TotalFunctions: 20, GazeCRAPload: intPtr(5)}},
 			maxGazeCrapload: intPtr(3),
 			expectFail:      true,
 		},
 		{
 			name:            "SC7: max-gaze-crapload=0 with positive actual → fail",
-			payload:         &aireport.ReportPayload{Summary: aireport.ReportSummary{GazeCRAPload: 1}},
+			payload:         &aireport.ReportPayload{Summary: aireport.ReportSummary{TotalFunctions: 20, GazeCRAPload: intPtr(1)}},
 			maxGazeCrapload: intPtr(0),
 			expectFail:      true,
 		},
 		{
 			name:            "SC-003 PASS: GazeCRAPload=0 below threshold=5 → pass",
-			payload:         &aireport.ReportPayload{Summary: aireport.ReportSummary{GazeCRAPload: 0}},
+			payload:         &aireport.ReportPayload{Summary: aireport.ReportSummary{TotalFunctions: 20, GazeCRAPload: intPtr(0)}},
 			maxGazeCrapload: intPtr(5),
 			expectFail:      false,
 		},

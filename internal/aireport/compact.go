@@ -25,7 +25,7 @@ type compactPayload struct {
 // the compact payload output.
 type compactSummary struct {
 	CRAPload            int      `json:"crapload"`
-	GazeCRAPload        int      `json:"gaze_crapload"`
+	GazeCRAPload        *int     `json:"gaze_crapload"`
 	AvgContractCoverage int      `json:"avg_contract_coverage"`
 	SSADegraded         bool     `json:"ssa_degraded"`
 	SSADegradedPackages []string `json:"ssa_degraded_packages"`

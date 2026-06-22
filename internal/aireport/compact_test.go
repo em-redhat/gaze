@@ -177,7 +177,7 @@ func buildFullPayload(t *testing.T) *ReportPayload {
 	return &ReportPayload{
 		Summary: ReportSummary{
 			CRAPload:            1,
-			GazeCRAPload:        0,
+			GazeCRAPload:        intPtr(0),
 			AvgContractCoverage: 50,
 			SSADegraded:         false,
 			Contractual:         1,
@@ -928,7 +928,7 @@ func TestCompactForAI_SizeBudget(t *testing.T) {
 	})
 
 	payload := &ReportPayload{
-		Summary:  ReportSummary{CRAPload: 50, GazeCRAPload: 10, AvgContractCoverage: 50},
+		Summary:  ReportSummary{CRAPload: 50, GazeCRAPload: intPtr(10), AvgContractCoverage: 50},
 		CRAP:     crapJSON,
 		Quality:  qualityJSON,
 		Classify: classifyJSON,

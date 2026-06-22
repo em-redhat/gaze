@@ -97,7 +97,7 @@ func Analyze(patterns []string, moduleDir string, opts Options) (*Report, error)
 	coverProfile := opts.CoverProfile
 	if coverProfile == "" {
 		var err error
-		coverProfile, err = generateCoverProfile(moduleDir, patterns)
+		coverProfile, err = generateCoverProfile(moduleDir, patterns, opts.Stderr)
 		if err != nil {
 			return nil, fmt.Errorf("generating coverage: %w", err)
 		}
@@ -155,7 +155,13 @@ func Analyze(patterns []string, moduleDir string, opts Options) (*Report, error)
 // generateCoverProfile runs go test to produce a coverage profile.
 // The profile is written to a temporary file to avoid clobbering
 // any existing cover.out in the user's working directory.
-func generateCoverProfile(moduleDir string, patterns []string) (string, error) {
+//
+// When go test exits non-zero but wrote a usable coverage profile
+// (non-empty file), the profile is preserved and a warning is
+// emitted to stderr. This supports partial coverage from runs where
+// some packages fail but others produce valid coverage data.
+// See design decision D1 in ci-gate-integrity.
+func generateCoverProfile(moduleDir string, patterns []string, stderr io.Writer) (string, error) {
 	tmpFile, err := os.CreateTemp("", "gaze-cover-*.out")
 	if err != nil {
 		return "", fmt.Errorf("creating temp cover profile: %w", err)
@@ -180,10 +186,36 @@ func generateCoverProfile(moduleDir string, patterns []string) (string, error) {
 	cmd.Dir = moduleDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		_ = os.Remove(profilePath)
-		return "", fmt.Errorf("go test failed: %s\n%s", err, string(output))
+		// Check if profile was written despite non-zero exit.
+		// go test -coverprofile writes coverage data per-package
+		// as each completes, so partial profiles are usable even
+		// when later packages fail.
+		profilePath, recoverErr := recoverPartialProfile(profilePath, err, stderr)
+		if recoverErr != nil {
+			return "", fmt.Errorf("go test failed and produced no coverage: %s\n%s", err, string(output))
+		}
+		return profilePath, nil
 	}
 
+	return profilePath, nil
+}
+
+// recoverPartialProfile checks whether a coverage profile exists
+// and has non-zero size after a go test failure. If the profile is
+// usable, it emits a warning to stderr and returns the profile path.
+// If the profile is missing or empty, it cleans up and returns an
+// error. The stderr writer may be nil, in which case the warning
+// is suppressed.
+func recoverPartialProfile(profilePath string, testErr error, stderr io.Writer) (string, error) {
+	info, statErr := os.Stat(profilePath)
+	if statErr != nil || info.Size() == 0 {
+		_ = os.Remove(profilePath)
+		return "", fmt.Errorf("profile missing or empty after test failure")
+	}
+	// Profile exists with data — warn and continue.
+	if stderr != nil {
+		_, _ = fmt.Fprintf(stderr, "warning: go test exited with error (partial coverage used): %s\n", testErr)
+	}
 	return profilePath, nil
 }
 

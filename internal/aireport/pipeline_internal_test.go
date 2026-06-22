@@ -16,9 +16,10 @@ func fakeSteps() pipelineStepFuncs {
 	return pipelineStepFuncs{
 		crapStep: func(_ []string, _ string, _ string, _ io.Writer, _ func(string, string) (crap.ContractCoverageInfo, bool)) (*crapStepResult, error) {
 			return &crapStepResult{
-				JSON:         json.RawMessage(`{"crap":"ok"}`),
-				CRAPload:     5,
-				GazeCRAPload: 3,
+				JSON:           json.RawMessage(`{"crap":"ok"}`),
+				CRAPload:       5,
+				GazeCRAPload:   intPtr(3),
+				TotalFunctions: 20,
 			}, nil
 		},
 		qualityStep: func(_ []string, _ string, _ io.Writer) (*qualityStepResult, error) {
@@ -269,9 +270,10 @@ func TestRunProductionPipeline_GazeCRAPloadFlowsThroughPipeline(t *testing.T) {
 	// Override crapStep to return a known GazeCRAPload value.
 	steps.crapStep = func(_ []string, _ string, _ string, _ io.Writer, _ func(string, string) (crap.ContractCoverageInfo, bool)) (*crapStepResult, error) {
 		return &crapStepResult{
-			JSON:         json.RawMessage(`{"crap":"ok"}`),
-			CRAPload:     2,
-			GazeCRAPload: 7,
+			JSON:           json.RawMessage(`{"crap":"ok"}`),
+			CRAPload:       2,
+			GazeCRAPload:   intPtr(7),
+			TotalFunctions: 15,
 		}, nil
 	}
 
@@ -280,8 +282,8 @@ func TestRunProductionPipeline_GazeCRAPloadFlowsThroughPipeline(t *testing.T) {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
 
-	if payload.Summary.GazeCRAPload != 7 {
-		t.Errorf("expected GazeCRAPload 7, got %d", payload.Summary.GazeCRAPload)
+	if payload.Summary.GazeCRAPload == nil || *payload.Summary.GazeCRAPload != 7 {
+		t.Errorf("expected GazeCRAPload 7, got %v", payload.Summary.GazeCRAPload)
 	}
 }
 
@@ -297,8 +299,8 @@ func TestRunProductionPipeline_SummaryFields(t *testing.T) {
 	if payload.Summary.CRAPload != 5 {
 		t.Errorf("expected CRAPload 5, got %d", payload.Summary.CRAPload)
 	}
-	if payload.Summary.GazeCRAPload != 3 {
-		t.Errorf("expected GazeCRAPload 3, got %d", payload.Summary.GazeCRAPload)
+	if payload.Summary.GazeCRAPload == nil || *payload.Summary.GazeCRAPload != 3 {
+		t.Errorf("expected GazeCRAPload 3, got %v", payload.Summary.GazeCRAPload)
 	}
 	if payload.Summary.AvgContractCoverage != 85 {
 		t.Errorf("expected AvgContractCoverage 85, got %d", payload.Summary.AvgContractCoverage)

@@ -4,13 +4,11 @@ import (
 	"testing"
 )
 
-func intPtr(v int) *int { return &v }
-
 // TestEvaluateThresholds_NilConfig verifies that nil thresholds (not provided)
 // result in no results and allPassed=true.
 func TestEvaluateThresholds_NilConfig(t *testing.T) {
 	payload := &ReportPayload{
-		Summary: ReportSummary{CRAPload: 10, GazeCRAPload: 5, AvgContractCoverage: 30},
+		Summary: ReportSummary{CRAPload: 10, GazeCRAPload: intPtr(5), AvgContractCoverage: 30},
 	}
 	results, passed := EvaluateThresholds(ThresholdConfig{}, payload)
 	if !passed {
@@ -41,8 +39,8 @@ func TestEvaluateThresholds_ZeroThresholdWithZeroActual(t *testing.T) {
 	if results[0].Name != "CRAPload" {
 		t.Errorf("expected Name=CRAPload, got %q", results[0].Name)
 	}
-	if results[0].Actual != 0 {
-		t.Errorf("expected Actual=0, got %d", results[0].Actual)
+	if results[0].Actual == nil || *results[0].Actual != 0 {
+		t.Errorf("expected Actual=0, got %v", results[0].Actual)
 	}
 	if results[0].Limit != 0 {
 		t.Errorf("expected Limit=0, got %d", results[0].Limit)
@@ -66,8 +64,8 @@ func TestEvaluateThresholds_ZeroThresholdWithPositiveActual(t *testing.T) {
 	if results[0].Passed {
 		t.Error("expected result.Passed=false")
 	}
-	if results[0].Actual != 3 {
-		t.Errorf("expected Actual=3, got %d", results[0].Actual)
+	if results[0].Actual == nil || *results[0].Actual != 3 {
+		t.Errorf("expected Actual=3, got %v", results[0].Actual)
 	}
 }
 
@@ -90,8 +88,8 @@ func TestEvaluateThresholds_BelowLimit(t *testing.T) {
 	if results[0].Name != "CRAPload" {
 		t.Errorf("expected Name=CRAPload, got %q", results[0].Name)
 	}
-	if results[0].Actual != 3 {
-		t.Errorf("expected Actual=3, got %d", results[0].Actual)
+	if results[0].Actual == nil || *results[0].Actual != 3 {
+		t.Errorf("expected Actual=3, got %v", results[0].Actual)
 	}
 	if results[0].Limit != 5 {
 		t.Errorf("expected Limit=5, got %d", results[0].Limit)
@@ -117,8 +115,8 @@ func TestEvaluateThresholds_AboveLimit(t *testing.T) {
 	if results[0].Name != "CRAPload" {
 		t.Errorf("expected Name=CRAPload, got %q", results[0].Name)
 	}
-	if results[0].Actual != 8 {
-		t.Errorf("expected Actual=8, got %d", results[0].Actual)
+	if results[0].Actual == nil || *results[0].Actual != 8 {
+		t.Errorf("expected Actual=8, got %v", results[0].Actual)
 	}
 	if results[0].Limit != 5 {
 		t.Errorf("expected Limit=5, got %d", results[0].Limit)
@@ -131,7 +129,7 @@ func TestEvaluateThresholds_AllThreeFields(t *testing.T) {
 	payload := &ReportPayload{
 		Summary: ReportSummary{
 			CRAPload:            4,
-			GazeCRAPload:        2,
+			GazeCRAPload:        intPtr(2),
 			AvgContractCoverage: 60,
 		},
 	}
@@ -156,8 +154,8 @@ func TestEvaluateThresholds_AllThreeFields(t *testing.T) {
 	if !byName["CRAPload"].Passed {
 		t.Error("expected CRAPload to pass")
 	}
-	if byName["CRAPload"].Actual != 4 {
-		t.Errorf("expected CRAPload.Actual=4, got %d", byName["CRAPload"].Actual)
+	if byName["CRAPload"].Actual == nil || *byName["CRAPload"].Actual != 4 {
+		t.Errorf("expected CRAPload.Actual=4, got %v", byName["CRAPload"].Actual)
 	}
 	if byName["CRAPload"].Limit != 5 {
 		t.Errorf("expected CRAPload.Limit=5, got %d", byName["CRAPload"].Limit)
@@ -165,8 +163,8 @@ func TestEvaluateThresholds_AllThreeFields(t *testing.T) {
 	if byName["GazeCRAPload"].Passed {
 		t.Error("expected GazeCRAPload to fail")
 	}
-	if byName["GazeCRAPload"].Actual != 2 {
-		t.Errorf("expected GazeCRAPload.Actual=2, got %d", byName["GazeCRAPload"].Actual)
+	if byName["GazeCRAPload"].Actual == nil || *byName["GazeCRAPload"].Actual != 2 {
+		t.Errorf("expected GazeCRAPload.Actual=2, got %v", byName["GazeCRAPload"].Actual)
 	}
 	if byName["GazeCRAPload"].Limit != 1 {
 		t.Errorf("expected GazeCRAPload.Limit=1, got %d", byName["GazeCRAPload"].Limit)
@@ -174,8 +172,8 @@ func TestEvaluateThresholds_AllThreeFields(t *testing.T) {
 	if !byName["AvgContractCoverage"].Passed {
 		t.Error("expected AvgContractCoverage to pass")
 	}
-	if byName["AvgContractCoverage"].Actual != 60 {
-		t.Errorf("expected AvgContractCoverage.Actual=60, got %d", byName["AvgContractCoverage"].Actual)
+	if byName["AvgContractCoverage"].Actual == nil || *byName["AvgContractCoverage"].Actual != 60 {
+		t.Errorf("expected AvgContractCoverage.Actual=60, got %v", byName["AvgContractCoverage"].Actual)
 	}
 	if byName["AvgContractCoverage"].Limit != 50 {
 		t.Errorf("expected AvgContractCoverage.Limit=50, got %d", byName["AvgContractCoverage"].Limit)
@@ -188,7 +186,7 @@ func TestEvaluateThresholds_BothCRAPloadsFail(t *testing.T) {
 	payload := &ReportPayload{
 		Summary: ReportSummary{
 			CRAPload:     10,
-			GazeCRAPload: 7,
+			GazeCRAPload: intPtr(7),
 		},
 	}
 	cfg := ThresholdConfig{
@@ -213,7 +211,7 @@ func TestEvaluateThresholds_BothCRAPloadsFail(t *testing.T) {
 // scenario 7: --max-gaze-crapload=0 with positive actual fails.
 func TestEvaluateThresholds_GazeCRAPloadZeroLiveThreshold(t *testing.T) {
 	payload := &ReportPayload{
-		Summary: ReportSummary{GazeCRAPload: 1},
+		Summary: ReportSummary{GazeCRAPload: intPtr(1)},
 	}
 	cfg := ThresholdConfig{MaxGazeCrapload: intPtr(0)}
 	results, passed := EvaluateThresholds(cfg, payload)
@@ -266,8 +264,8 @@ func TestEvaluateThresholds_MinContractCoverageDirection(t *testing.T) {
 	if results[0].Name != "AvgContractCoverage" {
 		t.Errorf("expected Name=AvgContractCoverage, got %q", results[0].Name)
 	}
-	if results[0].Actual != 60 {
-		t.Errorf("expected Actual=60, got %d", results[0].Actual)
+	if results[0].Actual == nil || *results[0].Actual != 60 {
+		t.Errorf("expected Actual=60, got %v", results[0].Actual)
 	}
 	if results[0].Limit != 60 {
 		t.Errorf("expected Limit=60, got %d", results[0].Limit)
@@ -287,8 +285,151 @@ func TestEvaluateThresholds_MinContractCoverageDirection(t *testing.T) {
 	if results2[0].Passed {
 		t.Error("expected result.Passed=false below boundary")
 	}
-	if results2[0].Actual != 59 {
-		t.Errorf("expected Actual=59, got %d", results2[0].Actual)
+	if results2[0].Actual == nil || *results2[0].Actual != 59 {
+		t.Errorf("expected Actual=59, got %v", results2[0].Actual)
+	}
+}
+
+// TestEvaluateThresholds_GazeCRAPload_ThresholdSet_DataUnavailable verifies
+// that when the GazeCRAPload threshold is set but the metric is nil
+// (unavailable), the result is FAIL with Actual==nil and a descriptive name.
+// This is the core fix for #108: CI gates must not silently pass when data
+// is missing.
+func TestEvaluateThresholds_GazeCRAPload_ThresholdSet_DataUnavailable(t *testing.T) {
+	payload := &ReportPayload{
+		Summary: ReportSummary{
+			CRAPload:     2,
+			GazeCRAPload: nil, // metric unavailable
+		},
+	}
+	cfg := ThresholdConfig{MaxGazeCrapload: intPtr(5)}
+	results, passed := EvaluateThresholds(cfg, payload)
+	if passed {
+		t.Error("expected passed=false when GazeCRAPload is nil (unavailable)")
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	r := results[0]
+	if r.Passed {
+		t.Error("expected result.Passed=false")
+	}
+	if r.Actual != nil {
+		t.Errorf("expected Actual=nil (unavailable), got %d", *r.Actual)
+	}
+	if r.Name != "GazeCRAPload (unavailable)" {
+		t.Errorf("expected Name='GazeCRAPload (unavailable)', got %q", r.Name)
+	}
+	if r.Limit != 5 {
+		t.Errorf("expected Limit=5, got %d", r.Limit)
+	}
+}
+
+// TestEvaluateThresholds_GazeCRAPload_ThresholdSet_DataWithinLimit verifies
+// that when the GazeCRAPload threshold is set and the metric is within the
+// limit, the result is PASS.
+func TestEvaluateThresholds_GazeCRAPload_ThresholdSet_DataWithinLimit(t *testing.T) {
+	payload := &ReportPayload{
+		Summary: ReportSummary{GazeCRAPload: intPtr(3)},
+	}
+	cfg := ThresholdConfig{MaxGazeCrapload: intPtr(5)}
+	results, passed := EvaluateThresholds(cfg, payload)
+	if !passed {
+		t.Error("expected passed=true when GazeCRAPload=3 <= limit=5")
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	r := results[0]
+	if !r.Passed {
+		t.Error("expected result.Passed=true")
+	}
+	if r.Name != "GazeCRAPload" {
+		t.Errorf("expected Name='GazeCRAPload', got %q", r.Name)
+	}
+	if r.Actual == nil || *r.Actual != 3 {
+		t.Errorf("expected Actual=3, got %v", r.Actual)
+	}
+	if r.Limit != 5 {
+		t.Errorf("expected Limit=5, got %d", r.Limit)
+	}
+}
+
+// TestEvaluateThresholds_GazeCRAPload_ThresholdSet_DataExceedsLimit verifies
+// that when the GazeCRAPload threshold is set and the metric exceeds the
+// limit, the result is FAIL.
+func TestEvaluateThresholds_GazeCRAPload_ThresholdSet_DataExceedsLimit(t *testing.T) {
+	payload := &ReportPayload{
+		Summary: ReportSummary{GazeCRAPload: intPtr(8)},
+	}
+	cfg := ThresholdConfig{MaxGazeCrapload: intPtr(5)}
+	results, passed := EvaluateThresholds(cfg, payload)
+	if passed {
+		t.Error("expected passed=false when GazeCRAPload=8 > limit=5")
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	r := results[0]
+	if r.Passed {
+		t.Error("expected result.Passed=false")
+	}
+	if r.Name != "GazeCRAPload" {
+		t.Errorf("expected Name='GazeCRAPload', got %q", r.Name)
+	}
+	if r.Actual == nil || *r.Actual != 8 {
+		t.Errorf("expected Actual=8, got %v", r.Actual)
+	}
+	if r.Limit != 5 {
+		t.Errorf("expected Limit=5, got %d", r.Limit)
+	}
+}
+
+// TestEvaluateThresholds_GazeCRAPload_ThresholdNotSet_DataUnavailable verifies
+// that when no GazeCRAPload threshold is configured and the metric is nil,
+// no result is emitted (threshold skipped entirely).
+func TestEvaluateThresholds_GazeCRAPload_ThresholdNotSet_DataUnavailable(t *testing.T) {
+	payload := &ReportPayload{
+		Summary: ReportSummary{
+			CRAPload:     5,
+			GazeCRAPload: nil,
+		},
+	}
+	// Only set CRAPload threshold, not GazeCRAPload.
+	cfg := ThresholdConfig{MaxCrapload: intPtr(10)}
+	results, passed := EvaluateThresholds(cfg, payload)
+	if !passed {
+		t.Error("expected passed=true (CRAPload 5 <= 10, GazeCRAPload threshold not set)")
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result (CRAPload only), got %d", len(results))
+	}
+	if results[0].Name != "CRAPload" {
+		t.Errorf("expected only CRAPload result, got %q", results[0].Name)
+	}
+}
+
+// TestEvaluateThresholds_GazeCRAPload_ThresholdNotSet_DataAvailable verifies
+// that when no GazeCRAPload threshold is configured but the metric is
+// available, no GazeCRAPload result is emitted (threshold skipped).
+func TestEvaluateThresholds_GazeCRAPload_ThresholdNotSet_DataAvailable(t *testing.T) {
+	payload := &ReportPayload{
+		Summary: ReportSummary{
+			CRAPload:     5,
+			GazeCRAPload: intPtr(3),
+		},
+	}
+	// Only set CRAPload threshold, not GazeCRAPload.
+	cfg := ThresholdConfig{MaxCrapload: intPtr(10)}
+	results, passed := EvaluateThresholds(cfg, payload)
+	if !passed {
+		t.Error("expected passed=true (CRAPload 5 <= 10, GazeCRAPload threshold not set)")
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result (CRAPload only), got %d", len(results))
+	}
+	if results[0].Name != "CRAPload" {
+		t.Errorf("expected only CRAPload result, got %q", results[0].Name)
 	}
 }
 
@@ -299,7 +440,7 @@ func BenchmarkEvaluateThresholds(b *testing.B) {
 	payload := &ReportPayload{
 		Summary: ReportSummary{
 			CRAPload:            8,
-			GazeCRAPload:        3,
+			GazeCRAPload:        intPtr(3),
 			AvgContractCoverage: 72,
 		},
 	}

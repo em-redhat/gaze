@@ -346,7 +346,7 @@ func TestRun_TextFormat_NilAdapter_ReturnsError(t *testing.T) {
 func TestRun_ThresholdFailure_ReturnsError(t *testing.T) {
 	maxCrapload := 5
 	payload := &ReportPayload{
-		Summary: ReportSummary{CRAPload: 10},
+		Summary: ReportSummary{TotalFunctions: 20, CRAPload: 10},
 	}
 
 	var stderr bytes.Buffer
@@ -373,7 +373,7 @@ func TestRun_ThresholdFailure_ReturnsError(t *testing.T) {
 func TestRun_ThresholdPass_ReturnsNil(t *testing.T) {
 	maxCrapload := 20
 	payload := &ReportPayload{
-		Summary: ReportSummary{CRAPload: 5},
+		Summary: ReportSummary{TotalFunctions: 20, CRAPload: 5},
 	}
 
 	var stderr bytes.Buffer
@@ -434,5 +434,118 @@ func TestCaptureJSON_FuncError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error from captureJSON")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Zero-result gate tests (#116)
+// ---------------------------------------------------------------------------
+
+// TestRun_ZeroResults_ThresholdSet_ReturnsError verifies that when the
+// pipeline produces zero analyzed functions (TotalFunctions=0) and
+// any threshold is configured, Run returns a non-nil error (#116).
+func TestRun_ZeroResults_ThresholdSet_ReturnsError(t *testing.T) {
+	maxCrapload := 5
+	payload := &ReportPayload{
+		// Zero results: TotalFunctions=0, no CRAP error.
+		Summary: ReportSummary{TotalFunctions: 0, CRAPload: 0, GazeCRAPload: nil},
+		Errors:  PayloadErrors{},
+	}
+
+	var stderr bytes.Buffer
+	err := Run(RunnerOptions{
+		Patterns:    []string{"./..."},
+		Format:      "json",
+		Stdout:      &bytes.Buffer{},
+		Stderr:      &stderr,
+		AnalyzeFunc: fakeAnalyze(payload, nil),
+		Thresholds: ThresholdConfig{
+			MaxCrapload: &maxCrapload,
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error when zero results and threshold set")
+	}
+	if !strings.Contains(err.Error(), "no functions analyzed") {
+		t.Errorf("expected 'no functions analyzed' in error, got: %v", err)
+	}
+}
+
+// TestRun_ZeroResults_NoThreshold_ReturnsNil verifies that when the
+// pipeline produces zero analyzed functions but no threshold is configured,
+// Run returns nil (no error).
+func TestRun_ZeroResults_NoThreshold_ReturnsNil(t *testing.T) {
+	payload := &ReportPayload{
+		Summary: ReportSummary{TotalFunctions: 0, CRAPload: 0, GazeCRAPload: nil},
+		Errors:  PayloadErrors{},
+	}
+
+	err := Run(RunnerOptions{
+		Patterns:    []string{"./..."},
+		Format:      "json",
+		Stdout:      &bytes.Buffer{},
+		Stderr:      &bytes.Buffer{},
+		AnalyzeFunc: fakeAnalyze(payload, nil),
+		// No thresholds configured.
+	})
+	if err != nil {
+		t.Fatalf("expected nil error when zero results and no threshold, got: %v", err)
+	}
+}
+
+// TestRun_ZeroResults_CRAPStepFailed_NoGate verifies that the zero-result
+// gate does NOT fire when the CRAP step itself failed (the error is already
+// captured in PayloadErrors.CRAP).
+func TestRun_ZeroResults_CRAPStepFailed_NoGate(t *testing.T) {
+	maxCrapload := 5
+	crapErr := "coverage profile failed"
+	payload := &ReportPayload{
+		Summary: ReportSummary{TotalFunctions: 0, CRAPload: 0, GazeCRAPload: nil},
+		Errors:  PayloadErrors{CRAP: &crapErr},
+	}
+
+	err := Run(RunnerOptions{
+		Patterns:    []string{"./..."},
+		Format:      "json",
+		Stdout:      &bytes.Buffer{},
+		Stderr:      &bytes.Buffer{},
+		AnalyzeFunc: fakeAnalyze(payload, nil),
+		Thresholds: ThresholdConfig{
+			MaxCrapload: &maxCrapload,
+		},
+	})
+	// The zero-result gate skips because payload.Errors.CRAP is set
+	// (the CRAP step already failed). Threshold evaluation proceeds:
+	// CRAPload(0) <= 5 passes, so Run returns nil. The key invariant
+	// is that the error is NOT "no functions analyzed" — that gate
+	// must not fire when the CRAP step itself reported an error.
+	if err != nil {
+		if strings.Contains(err.Error(), "no functions analyzed") {
+			t.Errorf("zero-result gate fired despite CRAP step error: %v", err)
+		} else {
+			t.Errorf("expected nil error (CRAP step error bypasses zero-result gate, threshold passes), got: %v", err)
+		}
+	}
+}
+
+// TestCheckZeroResultGate_NonZeroTotalFunctions verifies that the gate does
+// not fire when TotalFunctions > 0 (functions were analyzed).
+func TestCheckZeroResultGate_NonZeroTotalFunctions(t *testing.T) {
+	payload := &ReportPayload{
+		Summary: ReportSummary{TotalFunctions: 10, CRAPload: 0},
+	}
+	cfg := ThresholdConfig{MaxCrapload: intPtr(5)}
+	err := checkZeroResultGate(payload, cfg)
+	if err != nil {
+		t.Errorf("expected nil when TotalFunctions > 0, got: %v", err)
+	}
+}
+
+// TestCheckZeroResultGate_NilPayload verifies graceful handling of nil payload.
+func TestCheckZeroResultGate_NilPayload(t *testing.T) {
+	cfg := ThresholdConfig{MaxCrapload: intPtr(5)}
+	err := checkZeroResultGate(nil, cfg)
+	if err != nil {
+		t.Errorf("expected nil for nil payload, got: %v", err)
 	}
 }
