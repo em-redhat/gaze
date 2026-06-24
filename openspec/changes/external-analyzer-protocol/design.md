@@ -19,7 +19,7 @@ The JSON-RPC 2.0 protocol was chosen (per Issue #95) because it uses the same st
 - Define a JSON-RPC 2.0 protocol with 8 methods for gaze ↔ analyzer communication
 - Implement a JSON-RPC client in `internal/protocol/` for spawning and communicating with analyzer processes
 - Implement provider adapters in `internal/adapter/` that translate protocol responses to Phase 1 interface types
-- Add `--analyzer` and `--language` CLI flags to `analyze`, `crap`, `quality`, and `report` commands
+- Add `--analyzer` and `--language` CLI flags to `crap`, `quality`, and `report` commands
 - Add `analyzers` configuration section to `.gaze.yaml`
 - Validate the protocol with a mock analyzer binary (test fixture)
 - Document the protocol specification for external analyzer authors
@@ -51,7 +51,7 @@ gaze analyze --analyzer snake-eyes ./src
 ├─ 1. Find analyzer binary (CLI flag, .gaze.yaml, PATH)
 ├─ 2. Spawn: snake-eyes --stdio
 ├─ 3. initialize → capabilities handshake
-├─ 4. discover → find source + test files
+├─ 4. discover → find source + test files (optional)
 ├─ 5. analyze → detect side effects per function
 ├─ 6. complexity → cyclomatic complexity per function
 ├─ 7. coverage → parse language-specific coverage data
@@ -68,6 +68,7 @@ The `initialize` response declares which optional methods the analyzer supports:
 ```json
 {
   "capabilities": {
+    "discover": true,
     "test_mapping": true,
     "classify_signals": false
   },
@@ -92,6 +93,13 @@ ExternalContractCoverageProvider implements crap.ContractCoverageProvider
 
 The adapters hold a reference to the protocol client. Their methods translate between protocol JSON messages and Go types (`FunctionComplexity`, `FuncCoverage`, `taxonomy.AnalysisResult`, `ContractCoverageInfo`).
 
+Note: `ExternalSideEffectAnalyzer` is a composition dependency of
+`ExternalContractCoverageProvider`, not a standalone adapter passed
+to `crap.Options`. This matches Phase 1 D5. The `analyze` protocol
+method returns per-function results for the whole project; the
+adapter caches results and filters by pkgPath when `Analyze(pkgPath)`
+is called.
+
 ### D5: Analyzer discovery order
 
 1. `--analyzer <name>` CLI flag — explicit binary name
@@ -113,7 +121,7 @@ Consistent with the existing SSA degradation pattern and Phase 1's `ContractCove
 - Analyzer binary not found → clear error, exit non-zero
 - `initialize` handshake fails → clear error, exit non-zero
 - Required method (`analyze`, `complexity`, `coverage`) returns error → propagate error, exit non-zero
-- Optional method (`test_mapping`, `classify_signals`) returns error → warn on stderr, degrade gracefully (skip that data)
+- Optional method (`discover`, `test_mapping`, `classify_signals`) returns error → warn on stderr, degrade gracefully (skip that data)
 - Analyzer process crashes mid-session → detect via stdin/stdout close, return error
 - Malformed JSON response → parse error with context
 
@@ -168,6 +176,32 @@ The `analyze` method returns side effects using gaze's existing taxonomy types (
 
 The analyzer returns effects with `Classification` already attached (consistent with Phase 1 D5 — `SideEffectAnalyzer` returns pre-classified results). Optionally, `classify_signals` provides raw signals that gaze's scoring engine (`ComputeScore`) can use for classification.
 
+### D10: Protocol timeouts via context.Context
+
+`Client.Call` accepts a `context.Context` parameter for deadline/timeout
+control. The `Session` struct sets a per-method timeout (default 5 minutes
+for `analyze`/`complexity`/`coverage`, 30 seconds for `initialize`/
+`discover`/`shutdown`). When the context deadline expires, the client
+kills the subprocess and returns a timeout error. This prevents hung
+analyzers from blocking gaze indefinitely.
+
+### D11: `discover` is optional
+
+`discover` is optional in Phase 2. Its output (source files, test files,
+framework) is not consumed by any adapter — the provider interfaces
+accept patterns and rootDir directly. `discover` is reserved for future
+use cases (auto-detecting language, populating IDE file lists). Analyzers
+that don't implement `discover` are fully functional.
+
+### D12: `gaze analyze --analyzer` deferred to future phase
+
+The `gaze analyze` command calls `analysis.LoadAndAnalyze` directly, not
+through `crap.Options`. Adding `--analyzer` to it requires a separate
+integration path. Phase 2 adds `--analyzer` to `crap`, `quality`, and
+`report` only — these all flow through `crap.Options` providers. The
+`analyze` command is deferred to avoid splitting the implementation
+across two integration patterns.
+
 ## Risks / Trade-offs
 
 ### R1: Protocol stability
@@ -193,3 +227,12 @@ The analyzer returns effects with `Classification` already attached (consistent 
 **Risk**: A buggy external analyzer produces incorrect data, leading to misleading CRAP scores.
 
 **Mitigation**: Gaze validates incoming data structurally (required fields, valid types, score ranges). The `initialize` handshake includes protocol version — gaze can reject incompatible analyzers. Invalid `SideEffectType` values are reported as warnings.
+
+## Coverage Strategy
+
+- `internal/protocol/`: ≥80% line coverage via unit tests with fake analyzer binary. Tests cover: successful session, binary not found, mid-session crash, malformed JSON, timeout, error response.
+- `internal/adapter/`: ≥80% line coverage via unit tests with mock protocol client. Tests cover: each adapter translates canned responses correctly, optional method skipped when capability is false, error propagation.
+- `internal/config/`: existing coverage preserved; new `AnalyzersConfig` covered by config loading tests.
+- `cmd/gaze/`: CLI integration covered by E2E test with fake analyzer binary (task 5.4). Build via `go build` in TestMain.
+- Existing test suite regression: zero failures (task 6.1, 6.2).
+- No new ratchet — coverage targets are verified manually until the packages stabilize.

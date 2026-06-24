@@ -26,7 +26,7 @@ A new package implementing JSON-RPC 2.0 client over stdin/stdout. Gaze spawns an
 | Method | Required | Direction | Purpose |
 |--------|----------|-----------|---------|
 | `initialize` | Yes | gaze → analyzer | Handshake: root path, config, capabilities |
-| `discover` | Yes | gaze → analyzer | Find source files, test files, framework |
+| `discover` | No | gaze → analyzer | Find source files, test files, framework |
 | `analyze` | Yes | gaze → analyzer | Detect side effects per function |
 | `complexity` | Yes | gaze → analyzer | Cyclomatic complexity per function |
 | `coverage` | Yes | gaze → analyzer | Parse coverage data |
@@ -55,8 +55,10 @@ Analyzers are discovered via:
 
 ### New: CLI Flags
 
-- `--analyzer <name>` on `analyze`, `crap`, `quality`, `report` commands
+- `--analyzer <name>` on `crap`, `quality`, `report` commands
 - `--language <lang>` for explicit language selection (auto-detected otherwise)
+
+Note: `gaze analyze --analyzer` is deferred to a future phase (see design.md D12).
 
 ### Modified: CLI Commands
 
@@ -72,7 +74,6 @@ When `--analyzer` is specified, commands construct external provider adapters in
 - `multi-language-crap`: CRAP scoring, GazeCRAP, quadrants, and fix strategies for any language with an analyzer
 
 ### Modified Capabilities
-- `gaze analyze`: Extended with `--analyzer` and `--language` flags for external analysis
 - `gaze crap`: Extended with `--analyzer` and `--language` flags
 - `gaze quality`: Extended with `--analyzer` and `--language` flags
 - `gaze report`: Extended with `--analyzer` and `--language` flags
@@ -86,7 +87,7 @@ When `--analyzer` is specified, commands construct external provider adapters in
 - **New packages**: `internal/protocol/` (~5 files), `internal/adapter/` (~6 files)
 - **Modified packages**: `cmd/gaze/` (CLI flags, analyzer dispatch), `internal/config/` (analyzers config section)
 - **New config options**: `analyzers` section in `.gaze.yaml`
-- **CLI changes**: New `--analyzer` and `--language` flags on 4 commands
+- **CLI changes**: New `--analyzer` and `--language` flags on 3 commands (`crap`, `quality`, `report`)
 - **Backward compatible**: When no external analyzer is configured, gaze behaves exactly as it does today (built-in Go analysis via `goprovider`)
 - **New external dependency**: None — JSON-RPC 2.0 is simple enough to implement without a library
 
@@ -103,12 +104,12 @@ This change builds directly on Phase 1's provider interfaces:
   - D5: `SideEffectAnalyzer` consumed by `ContractCoverageProvider`, not `crap.Options`
   - D7: Deprecated `ContractCoverageFunc`/`SSADegradedPackages` preserved for backward compat
 
-## Open Questions (from Issue #95)
+## Deferred Decisions (from Issue #95)
 
-1. **Taxonomy evolution**: Should the side effect taxonomy be generalized for language-specific effect types? The current 38 types include 9 Go-specific ones (ChannelSend, DeferredReturnMutation, etc.). Options: (a) extend with language-specific types, (b) map to existing types, (c) split core + extensions.
-2. **Protocol versioning**: How should protocol versions be negotiated? Recommend semantic versioning in `initialize` handshake with `minProtocolVersion`/`maxProtocolVersion`.
-3. **Error handling**: How should analyzer crashes, malformed responses, and partial results be handled? Recommend graceful degradation (consistent with SSA failure handling today).
-4. **Streaming**: Should `analyze` support streaming results for large codebases, or batch only? Recommend batch for Phase 2, streaming as future enhancement.
+1. **Taxonomy evolution**: Deferred to Phase 3. Phase 2 uses option (b): map language-specific concepts to existing gaze taxonomy types (e.g., Python `yield` → `ReturnValue`). The current 38 types include 9 Go-specific ones that are valid but unlikely from non-Go analyzers.
+2. **Protocol versioning**: Resolved in D3/D8 — semver in `initialize` response (`protocol_version` field). `minProtocolVersion`/`maxProtocolVersion` negotiation deferred to when a breaking protocol change is needed.
+3. **Error handling**: Resolved in D7 — graceful degradation for optional methods, hard error for required methods. Consistent with existing SSA failure handling.
+4. **Streaming**: Deferred. Batch only in Phase 2. Streaming (JSONL per function) can be added as a future protocol extension via a new `analyze/stream` method without breaking changes.
 
 ## Constitution Alignment
 

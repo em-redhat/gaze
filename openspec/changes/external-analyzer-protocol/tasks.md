@@ -1,8 +1,8 @@
 ## 1. Protocol Layer
 
-- [ ] 1.1 Create `internal/protocol/types.go` with JSON-RPC 2.0 message types: `Request` (jsonrpc, id, method, params), `Response` (jsonrpc, id, result, error), `Error` (code, message, data). Add protocol-specific types: `InitializeParams` (root_path, config), `InitializeResult` (capabilities, protocol_version, analyzer_name, language), `Capabilities` (test_mapping, classify_signals booleans). Add method constants for all 8 methods.
-- [ ] 1.2 Create `internal/protocol/client.go` with `Client` struct that manages a subprocess (exec.Cmd, stdin io.Writer, stdout bufio.Reader, stderr bytes.Buffer). Methods: `NewClient(binary string, args []string) (*Client, error)` spawns the subprocess, `Call(method string, params any) (*Response, error)` sends a request and reads a response (sequential request/response, no multiplexing), `Close()` sends shutdown and waits for process exit. Include request ID sequencing (atomic counter) and response ID matching.
-- [ ] 1.3 Create `internal/protocol/client_test.go` with tests using a fake analyzer binary at `internal/protocol/testdata/fake_analyzer/main.go`. Tests: (1) successful full session (initialize → analyze → complexity → coverage → shutdown), (2) binary not found error, (3) analyzer crash mid-session (fake exits after initialize), (4) malformed JSON response, (5) JSON-RPC error response propagation.
+- [ ] 1.1 Create `internal/protocol/types.go` with JSON-RPC 2.0 message types: `Request` (jsonrpc, id, method, params), `Response` (jsonrpc, id, result, error), `Error` (code, message, data). Add protocol-specific types: `InitializeParams` (root_path, config), `InitializeResult` (capabilities, protocol_version, analyzer_name, language), `Capabilities` (discover, test_mapping, classify_signals booleans). Add method constants for all 8 methods.
+- [ ] 1.2 Create `internal/protocol/client.go` with `Client` struct that manages a subprocess (exec.Cmd, stdin io.Writer, stdout bufio.Reader, stderr bytes.Buffer). Methods: `NewClient(binary string, args []string) (*Client, error)` spawns the subprocess, `Call(ctx context.Context, method string, params any) (*Response, error)` sends a request and reads a response (sequential request/response, no multiplexing) with deadline/timeout via `context.Context` (see design.md D10), `Close()` sends shutdown and waits for process exit. Include request ID sequencing (atomic counter) and response ID matching. When the context deadline expires, the client kills the subprocess and returns a timeout error.
+- [ ] 1.3 Create `internal/protocol/client_test.go` with tests using a fake analyzer binary at `internal/protocol/testdata/fake_analyzer/main.go`. Tests: (1) successful full session (initialize → analyze → complexity → coverage → shutdown), (2) binary not found error, (3) analyzer crash mid-session (fake exits after initialize), (4) malformed JSON response, (5) JSON-RPC error response propagation, (6) timeout via context.Context cancellation.
 - [ ] 1.4 Create `internal/protocol/testdata/fake_analyzer/main.go` — a Go binary that reads JSON-RPC requests from stdin and writes canned responses to stdout. Supports all 8 methods with hardcoded response data. Accepts `--stdio` flag. Optionally `--crash-after=initialize` to simulate mid-session crashes.
 
 ## 2. Protocol Response Types
@@ -27,9 +27,9 @@
 
 ## 5. CLI Integration
 
-- [ ] 5.1 Add `--analyzer` string flag and `--language` string flag to the `analyze`, `crap`, `quality`, and `report` commands in `cmd/gaze/main.go`. When `--analyzer` is set, construct `adapter.Session` and use external provider adapters. When not set, use existing Go providers.
+- [ ] 5.1 Add `--analyzer` string flag and `--language` string flag to the `crap`, `quality`, and `report` commands in `cmd/gaze/main.go`. When `--analyzer` is set, construct `adapter.Session` and use external provider adapters. When not set, use existing Go providers. (`gaze analyze --analyzer` is deferred — see design.md D12.)
 - [ ] 5.2 Update `runCrap` in `cmd/gaze/main.go` to check for `--analyzer` flag. If set: call `adapter.Discover()`, create `adapter.Session`, get providers, pass to `crap.Options`. If not set: use `goprovider` as today.
-- [ ] 5.3 Update `runAnalyze`, `runQuality`, and the report pipeline similarly.
+- [ ] 5.3 Update `runQuality` and the report pipeline similarly. (`runAnalyze` is deferred — see design.md D12.)
 - [ ] 5.4 Add integration test with fake analyzer: `go test -run TestCrapWithExternalAnalyzer ./cmd/gaze/...` — spawns the fake analyzer binary, runs `gaze crap --analyzer fake_analyzer`, verifies CRAP scores are computed from the fake data.
 
 ## 6. Non-Regression Verification
