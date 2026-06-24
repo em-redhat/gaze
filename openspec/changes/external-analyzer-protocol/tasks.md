@@ -27,25 +27,25 @@
 
 ## 5. CLI Integration
 
-- [ ] 5.1 Add `--analyzer` string flag and `--language` string flag to the `crap`, `quality`, and `report` commands in `cmd/gaze/main.go`. When `--analyzer` is set, construct `adapter.Session` and use external provider adapters. When not set, use existing Go providers. (`gaze analyze --analyzer` is deferred — see design.md D12.)
-- [ ] 5.2 Update `runCrap` in `cmd/gaze/main.go` to check for `--analyzer` flag. If set: call `adapter.Discover()`, create `adapter.Session`, get providers, pass to `crap.Options`. If not set: use `goprovider` as today.
-- [ ] 5.3 Update `runQuality` and the report pipeline similarly. (`runAnalyze` is deferred — see design.md D12.)
-- [ ] 5.4 Add integration test with fake analyzer: `go test -run TestCrapWithExternalAnalyzer ./cmd/gaze/...` — spawns the fake analyzer binary, runs `gaze crap --analyzer fake_analyzer`, verifies CRAP scores are computed from the fake data.
+- [x] 5.1 Add `--analyzer` string flag and `--language` string flag to the `crap`, `quality`, and `report` commands in `cmd/gaze/main.go`. When `--analyzer` is set, construct `adapter.Session` and use external provider adapters. When not set, use existing Go providers. (`gaze analyze --analyzer` is deferred — see design.md D12.)
+- [x] 5.2 Update `runCrap` in `cmd/gaze/main.go` to check for `--analyzer` flag. If set: call `adapter.Discover()`, create `adapter.Session`, get providers, pass to `crap.Options`. If not set: use `goprovider` as today.
+- [x] 5.3 Update `runQuality` and the report pipeline similarly. (`runAnalyze` is deferred — see design.md D12.)
+- [x] 5.4 Add integration test with fake analyzer: `go test -run TestCrapWithExternalAnalyzer ./cmd/gaze/...` — spawns the fake analyzer binary, runs `gaze crap --analyzer fake_analyzer`, verifies CRAP scores are computed from the fake data.
 
 ## 6. Non-Regression Verification
 
-- [ ] 6.1 Run `go test -race -count=1 -short ./...` — all tests MUST pass with zero failures.
-- [ ] 6.2 Run `go test -race -count=1 -run TestRunSelfCheck -timeout 30m ./cmd/gaze/...` — E2E self-check MUST produce identical output (verifies Go provider path is unchanged).
-- [ ] 6.3 Run `golangci-lint run` — MUST pass with no new warnings.
+- [x] 6.1 Run `go test -race -count=1 -short ./...` — all tests MUST pass with zero failures.
+- [x] 6.2 Run `go test -race -count=1 -run TestRunSelfCheck -timeout 30m ./cmd/gaze/...` — E2E self-check MUST produce identical output (verifies Go provider path is unchanged).
+- [x] 6.3 Run `golangci-lint run` — MUST pass with no new warnings.
 
 ## 7. Documentation
 
-- [ ] 7.1 Update `README.md` with external analyzer section: how to use `--analyzer`, `.gaze.yaml` config, protocol overview for analyzer authors.
-- [ ] 7.2 Update `AGENTS.md` — add `internal/protocol/` and `internal/adapter/` to architecture section. Add to Recent Changes.
-- [ ] 7.3 Create `docs/protocol.md` — full protocol specification for external analyzer authors: JSON-RPC message format, method definitions, request/response schemas, capability negotiation, error handling, lifecycle diagram.
-- [ ] 7.4 Create GitHub issue in `unbound-force/website` for documentation updates: new CLI flags, multi-language support, analyzer development guide.
+- [x] 7.1 Update `README.md` with external analyzer section: how to use `--analyzer`, `.gaze.yaml` config, protocol overview for analyzer authors.
+- [x] 7.2 Update `AGENTS.md` — add `internal/protocol/` and `internal/adapter/` to architecture section. Add to Recent Changes.
+- [x] 7.3 Create `docs/protocol.md` — full protocol specification for external analyzer authors: JSON-RPC message format, method definitions, request/response schemas, capability negotiation, error handling, lifecycle diagram.
+- [x] 7.4 Create GitHub issue in `unbound-force/website` for documentation updates: new CLI flags, multi-language support, analyzer development guide.
 
 ## 8. Constitution Alignment Verification
 
-- [ ] 8.1 Verify all four principles: Accuracy (scoring engine unchanged, mock analyzer validates protocol bridge), Minimal Assumptions (works with any language analyzer implementing the protocol, no analyzer needed for Go-only usage), Actionable Output (reports from external data use same formatting and fix strategies), Testability (protocol client testable with fake binary, adapters testable with mock protocol, end-to-end testable with fake analyzer).
+- [x] 8.1 Verify all four principles: Accuracy (scoring engine unchanged, mock analyzer validates protocol bridge), Minimal Assumptions (works with any language analyzer implementing the protocol, no analyzer needed for Go-only usage), Actionable Output (reports from external data use same formatting and fix strategies), Testability (protocol client testable with fake binary, adapters testable with mock protocol, end-to-end testable with fake analyzer).
 <!-- spec-review: passed -->
