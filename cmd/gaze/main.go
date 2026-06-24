@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 
 	charmlog "github.com/charmbracelet/log"
 	"github.com/spf13/cobra"
+	"github.com/unbound-force/gaze/internal/adapter"
 	"github.com/unbound-force/gaze/internal/aireport"
 	"github.com/unbound-force/gaze/internal/analysis"
 	"github.com/unbound-force/gaze/internal/classify"
@@ -453,6 +455,8 @@ type crapParams struct {
 	aiMapper        string
 	aiMapperModel   string
 	baselinePath    string
+	analyzerFlag    string
+	languageFlag    string
 	stdout          io.Writer
 	stderr          io.Writer
 
@@ -493,6 +497,13 @@ validating output or generating client types.`,
 func runCrap(p crapParams) error {
 	if p.format != "text" && p.format != "json" {
 		return fmt.Errorf("invalid format %q: must be 'text' or 'json'", p.format)
+	}
+
+	// External analyzer path: when --analyzer is set, use the
+	// external protocol adapter instead of Go providers.
+	// Design decision D12: deferred for `gaze analyze`.
+	if p.analyzerFlag != "" {
+		return runCrapWithExternalAnalyzer(p)
 	}
 
 	// Wire the quality pipeline to provide contract coverage for
@@ -588,6 +599,69 @@ func runCrap(p crapParams) error {
 			comparisonResult.Summary.NewViolations)
 	}
 
+	return checkCIThresholds(rpt, p.maxCrapload, p.maxGazeCrapload)
+}
+
+// runCrapWithExternalAnalyzer runs the CRAP pipeline using an
+// external analyzer binary via the JSON-RPC protocol. The analyzer
+// provides complexity, coverage, and optionally contract coverage
+// data instead of the Go-specific providers.
+//
+// Design decision D5: Three-tier discovery (CLI flag → config → PATH).
+// Design decision D12: Only crap/quality/report use this path.
+func runCrapWithExternalAnalyzer(p crapParams) error {
+	cfg := loadGazeConfigBestEffort(p.moduleDir)
+	binary, args, err := adapter.Discover(p.analyzerFlag, p.languageFlag, cfg)
+	if err != nil {
+		return fmt.Errorf("discovering analyzer: %w", err)
+	}
+	if binary == "" {
+		return fmt.Errorf("analyzer %q not found", p.analyzerFlag)
+	}
+
+	session := adapter.NewSession(binary, args, p.moduleDir, p.patterns, p.stderr)
+	providers, err := session.Initialize()
+	if err != nil {
+		return fmt.Errorf("initializing analyzer: %w", err)
+	}
+	defer session.Close()
+
+	_, _ = fmt.Fprintf(p.stderr, "Using external analyzer: %s (language: %s)\n",
+		providers.AnalyzerName, providers.Language)
+
+	// Wire external providers into crap.Options.
+	p.opts.ComplexityProvider = providers.Complexity
+	p.opts.LineCoverageProvider = providers.LineCoverage
+	if providers.ContractCoverage != nil {
+		p.opts.ContractCoverageProvider = providers.ContractCoverage
+	}
+
+	analyze := p.analyzeFunc
+	if analyze == nil {
+		analyze = crap.Analyze
+	}
+	rpt, err := analyze(p.patterns, p.moduleDir, p.opts)
+	if err != nil {
+		return err
+	}
+
+	if len(rpt.Scores) == 0 {
+		if p.thresholdSet {
+			return fmt.Errorf("no functions analyzed — cannot evaluate thresholds (check package patterns)")
+		}
+		_, _ = fmt.Fprintln(p.stderr, "warning: no functions analyzed")
+	}
+
+	if rpt.Summary.GazeCRAPload == nil {
+		_, _ = fmt.Fprintln(p.stderr,
+			"note: GazeCRAP unavailable — analyzer does not support test_mapping")
+	}
+
+	if err := writeCrapReport(p.stdout, p.format, rpt); err != nil {
+		return err
+	}
+
+	printCISummary(p.stderr, rpt, p.maxCrapload, p.maxGazeCrapload)
 	return checkCIThresholds(rpt, p.maxCrapload, p.maxGazeCrapload)
 }
 
@@ -759,6 +833,8 @@ func newCrapCmd() *cobra.Command {
 		aiMapper          string
 		aiMapperModel     string
 		baselinePath      string
+		analyzerFlag      string
+		languageFlag      string
 	)
 
 	cmd := &cobra.Command{
@@ -798,6 +874,8 @@ automatically.`,
 				aiMapper:        aiMapper,
 				aiMapperModel:   aiMapperModel,
 				baselinePath:    baselinePath,
+				analyzerFlag:    analyzerFlag,
+				languageFlag:    languageFlag,
 				stdout:          os.Stdout,
 				stderr:          os.Stderr,
 				thresholdSet:    cmd.Flags().Changed("max-crapload") || cmd.Flags().Changed("max-gaze-crapload"),
@@ -823,6 +901,10 @@ automatically.`,
 		"model name for AI mapper (required for ollama)")
 	cmd.Flags().StringVar(&baselinePath, "baseline", "",
 		"path to baseline file for comparison")
+	cmd.Flags().StringVar(&analyzerFlag, "analyzer", "",
+		"external analyzer binary (e.g., snake-eyes)")
+	cmd.Flags().StringVar(&languageFlag, "language", "",
+		"target language for analyzer discovery (e.g., python)")
 
 	return cmd
 }
@@ -928,6 +1010,8 @@ type qualityParams struct {
 	maxOverSpecification int
 	aiMapper             string
 	aiMapperModel        string
+	analyzerFlag         string
+	languageFlag         string
 	stdout               io.Writer
 	stderr               io.Writer
 }
@@ -936,6 +1020,13 @@ type qualityParams struct {
 func runQuality(p qualityParams) error {
 	if p.format != "text" && p.format != "json" {
 		return fmt.Errorf("invalid format %q: must be 'text' or 'json'", p.format)
+	}
+
+	// External analyzer path: quality requires Go-specific test
+	// loading and assertion mapping that cannot be delegated.
+	if p.analyzerFlag != "" {
+		return fmt.Errorf("--analyzer is not yet supported for 'gaze quality'; " +
+			"use 'gaze crap --analyzer' or 'gaze report --analyzer' instead")
 	}
 
 	// Resolve package patterns to concrete package paths.
@@ -1262,6 +1353,8 @@ func newQualityCmd() *cobra.Command {
 		maxOverSpecification int
 		aiMapper             string
 		aiMapperModel        string
+		analyzerFlag         string
+		languageFlag         string
 	)
 
 	cmd := &cobra.Command{
@@ -1290,6 +1383,8 @@ Packages without test files are skipped with a warning.`,
 				maxOverSpecification: maxOverSpecification,
 				aiMapper:             aiMapper,
 				aiMapperModel:        aiMapperModel,
+				analyzerFlag:         analyzerFlag,
+				languageFlag:         languageFlag,
 				stdout:               os.Stdout,
 				stderr:               os.Stderr,
 			})
@@ -1318,6 +1413,10 @@ Packages without test files are skipped with a warning.`,
 		"AI backend for assertion mapping fallback: claude, gemini, ollama, or opencode")
 	cmd.Flags().StringVar(&aiMapperModel, "ai-mapper-model", "",
 		"model name for AI mapper (required for ollama)")
+	cmd.Flags().StringVar(&analyzerFlag, "analyzer", "",
+		"external analyzer binary (e.g., snake-eyes)")
+	cmd.Flags().StringVar(&languageFlag, "language", "",
+		"target language for analyzer discovery (e.g., python)")
 
 	return cmd
 }
@@ -1444,6 +1543,8 @@ type reportParams struct {
 	maxGazeCrapload     *int
 	minContractCoverage *int
 	coverProfile        string
+	analyzerFlag        string
+	languageFlag        string
 	stdout              io.Writer
 	stderr              io.Writer
 
@@ -1519,11 +1620,11 @@ func runReport(p reportParams) error {
 	// Resolve AI adapter (validates allowlist name). The pre-flight binary
 	// check (FR-012) runs inside aireport.Run, before the analysis pipeline,
 	// via ValidateAdapterBinary.
-	var adapter aireport.AIAdapter
+	var aiAdapter aireport.AIAdapter
 	var systemPrompt string
 	if p.format != "json" {
 		var adapterErr error
-		adapter, adapterErr = aireport.NewAdapter(adapterCfg)
+		aiAdapter, adapterErr = aireport.NewAdapter(adapterCfg)
 		if adapterErr != nil {
 			return fmt.Errorf("invalid --ai value: %w", adapterErr)
 		}
@@ -1542,7 +1643,7 @@ func runReport(p reportParams) error {
 	opts := aireport.RunnerOptions{
 		Patterns:        p.patterns,
 		ModuleDir:       moduleDir,
-		Adapter:         adapter,
+		Adapter:         aiAdapter,
 		AdapterCfg:      adapterCfg,
 		SystemPrompt:    systemPrompt,
 		Format:          p.format,
@@ -1557,12 +1658,109 @@ func runReport(p reportParams) error {
 		},
 	}
 
+	// External analyzer path: when --analyzer is set, override the
+	// CRAP step's providers with external adapters. The quality,
+	// classify, and docscan steps are Go-specific and are skipped
+	// when using an external analyzer (their errors are recorded
+	// in the payload).
+	if p.analyzerFlag != "" {
+		analyzeFunc, cleanup, extErr := buildExternalReportAnalyzeFunc(
+			p.analyzerFlag, p.languageFlag, moduleDir, p.patterns, p.stderr,
+		)
+		if extErr != nil {
+			return extErr
+		}
+		defer cleanup()
+		opts.AnalyzeFunc = analyzeFunc
+	}
+
 	runFn := p.runnerFunc
 	if runFn == nil {
 		runFn = aireport.Run
 	}
 
 	return runFn(opts)
+}
+
+// buildExternalReportAnalyzeFunc creates an AnalyzeFunc that uses an
+// external analyzer for the CRAP step of the report pipeline. The
+// quality, classify, and docscan steps are skipped (they are
+// Go-specific). Returns the analyze function, a cleanup function
+// (to close the session), and an error.
+func buildExternalReportAnalyzeFunc(
+	analyzerFlag, languageFlag, moduleDir string,
+	patterns []string,
+	stderr io.Writer,
+) (func([]string, string) (*aireport.ReportPayload, error), func(), error) {
+	cfg := loadGazeConfigBestEffort(moduleDir)
+	binary, args, err := adapter.Discover(analyzerFlag, languageFlag, cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("discovering analyzer: %w", err)
+	}
+	if binary == "" {
+		return nil, nil, fmt.Errorf("analyzer %q not found", analyzerFlag)
+	}
+
+	session := adapter.NewSession(binary, args, moduleDir, patterns, stderr)
+	providers, err := session.Initialize()
+	if err != nil {
+		_ = session.Close()
+		return nil, nil, fmt.Errorf("initializing analyzer: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(stderr, "Using external analyzer: %s (language: %s)\n",
+		providers.AnalyzerName, providers.Language)
+
+	analyzeFunc := func(pats []string, modDir string) (*aireport.ReportPayload, error) {
+		opts := crap.DefaultOptions()
+		opts.Stderr = stderr
+		opts.ComplexityProvider = providers.Complexity
+		opts.LineCoverageProvider = providers.LineCoverage
+		if providers.ContractCoverage != nil {
+			opts.ContractCoverageProvider = providers.ContractCoverage
+		}
+
+		rpt, crapErr := crap.Analyze(pats, modDir, opts)
+		if crapErr != nil {
+			return nil, fmt.Errorf("CRAP analysis with external analyzer: %w", crapErr)
+		}
+
+		crapJSON, jsonErr := captureReportJSON(func(w io.Writer) error {
+			return crap.WriteJSON(w, rpt)
+		})
+		if jsonErr != nil {
+			return nil, jsonErr
+		}
+
+		payload := &aireport.ReportPayload{
+			CRAP: crapJSON,
+		}
+		payload.Summary.CRAPload = rpt.Summary.CRAPload
+		payload.Summary.GazeCRAPload = rpt.Summary.GazeCRAPload
+		payload.Summary.TotalFunctions = rpt.Summary.TotalFunctions
+
+		// Quality, classify, and docscan are Go-specific — record
+		// them as skipped rather than failed.
+		skipped := "skipped: external analyzer mode"
+		payload.Errors.Quality = &skipped
+		payload.Errors.Classify = &skipped
+		payload.Errors.Docscan = &skipped
+
+		return payload, nil
+	}
+
+	cleanup := func() { _ = session.Close() }
+	return analyzeFunc, cleanup, nil
+}
+
+// captureReportJSON runs fn writing JSON to a buffer and returns the bytes.
+// This is a local helper matching the pattern in aireport.captureJSON.
+func captureReportJSON(fn func(w io.Writer) error) (json.RawMessage, error) {
+	var buf bytes.Buffer
+	if err := fn(&buf); err != nil {
+		return nil, err
+	}
+	return json.RawMessage(buf.Bytes()), nil
 }
 
 // newReportCmd creates the "report" subcommand that orchestrates gaze's four
@@ -1574,6 +1772,8 @@ func newReportCmd() *cobra.Command {
 		modelName    string
 		aiTimeout    time.Duration
 		coverProfile string
+		analyzerFlag string
+		languageFlag string
 
 		// Threshold raw values and "was set" flags for *int semantics.
 		maxCraploadVal     int
@@ -1629,6 +1829,8 @@ Examples:
 				maxGazeCrapload:     maxGazeCrapload,
 				minContractCoverage: minContractCoverage,
 				coverProfile:        coverProfile,
+				analyzerFlag:        analyzerFlag,
+				languageFlag:        languageFlag,
 				stdout:              cmd.OutOrStdout(),
 				stderr:              cmd.ErrOrStderr(),
 			}
@@ -1647,6 +1849,8 @@ Examples:
 	cmd.Flags().IntVar(&maxGazeCraploadVal, "max-gaze-crapload", 0, "fail if GazeCRAPload exceeds N")
 	cmd.Flags().IntVar(&minContractCovVal, "min-contract-coverage", 0, "fail if avg contract coverage is below N%")
 	cmd.Flags().StringVar(&coverProfile, "coverprofile", "", "path to a pre-generated coverage profile (skips internal go test run)")
+	cmd.Flags().StringVar(&analyzerFlag, "analyzer", "", "external analyzer binary (e.g., snake-eyes)")
+	cmd.Flags().StringVar(&languageFlag, "language", "", "target language for analyzer discovery (e.g., python)")
 
 	return cmd
 }
@@ -1674,7 +1878,7 @@ func buildAIMapperFunc(backend, model string) (quality.AIMapperFunc, error) {
 		Model:   model,
 		Timeout: 2 * time.Minute,
 	}
-	adapter, err := aireport.NewAdapter(cfg)
+	aiAdapter, err := aireport.NewAdapter(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("invalid --ai-mapper value: %w", err)
 	}
@@ -1690,7 +1894,7 @@ func buildAIMapperFunc(backend, model string) (quality.AIMapperFunc, error) {
 	return func(ctx quality.AIMapperContext) (string, error) {
 		prompt := quality.BuildAIMapperPrompt(ctx)
 
-		result, formatErr := adapter.Format(
+		result, formatErr := aiAdapter.Format(
 			context.Background(),
 			systemPrompt,
 			strings.NewReader(prompt),
