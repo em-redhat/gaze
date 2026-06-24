@@ -48,3 +48,4 @@
 ## 8. Constitution Alignment Verification
 
 - [ ] 8.1 Verify all four principles: Accuracy (scoring engine unchanged, mock analyzer validates protocol bridge), Minimal Assumptions (works with any language analyzer implementing the protocol, no analyzer needed for Go-only usage), Actionable Output (reports from external data use same formatting and fix strategies), Testability (protocol client testable with fake binary, adapters testable with mock protocol, end-to-end testable with fake analyzer).
+<!-- spec-review: passed -->
