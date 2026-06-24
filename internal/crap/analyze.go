@@ -6,13 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
-
-	"github.com/fzipp/gocyclo"
 )
 
 // Options configures CRAP analysis.
@@ -37,6 +34,21 @@ type Options struct {
 	// during coverage analysis. If nil, warnings are suppressed.
 	Stderr io.Writer
 
+	// ComplexityProvider computes per-function cyclomatic complexity.
+	// Required — Analyze returns an error if nil.
+	ComplexityProvider ComplexityProvider
+
+	// LineCoverageProvider produces per-function line coverage data.
+	// Required — Analyze returns an error if nil.
+	LineCoverageProvider LineCoverageProvider
+
+	// ContractCoverageProvider builds a contract coverage lookup
+	// function for GazeCRAP scoring. When set, it takes precedence
+	// over ContractCoverageFunc. When nil, falls back to
+	// ContractCoverageFunc/SSADegradedPackages (deprecated path).
+	ContractCoverageProvider ContractCoverageProvider
+
+	// Deprecated: Use ContractCoverageProvider instead.
 	// ContractCoverageFunc is an optional function that returns
 	// contract coverage info for a given function. When provided,
 	// GazeCRAP scores, contract coverage, quadrant classifications,
@@ -44,6 +56,7 @@ type Options struct {
 	// If nil, GazeCRAP fields remain unavailable (FR-015).
 	ContractCoverageFunc func(pkg, function string) (ContractCoverageInfo, bool)
 
+	// Deprecated: Use ContractCoverageProvider instead.
 	// SSADegradedPackages lists package paths where SSA construction
 	// failed during quality analysis. Propagated to Summary so the
 	// CRAP JSON output indicates which packages have partial data.
@@ -86,50 +99,60 @@ func DefaultOptions() Options {
 
 // Analyze computes CRAP scores for all functions in the given
 // package patterns. Returns a *Report containing per-function scores
-// and a summary, or an error if coverage profiling or source loading
-// fails.
+// and a summary, or an error if providers are nil or analysis fails.
+//
+// Callers must construct and provide ComplexityProvider and
+// LineCoverageProvider via Options. The crap package does not import
+// any Go-specific analysis packages — providers encapsulate all
+// language-specific logic (see design decision D3).
 func Analyze(patterns []string, moduleDir string, opts Options) (*Report, error) {
+	if opts.ComplexityProvider == nil {
+		return nil, fmt.Errorf("ComplexityProvider is required")
+	}
+	if opts.LineCoverageProvider == nil {
+		return nil, fmt.Errorf("LineCoverageProvider is required")
+	}
+
 	if opts.CRAPThreshold <= 0 {
 		opts.CRAPThreshold = 15
 	}
 
-	// Step 1: Generate coverage profile if not provided.
-	coverProfile := opts.CoverProfile
-	if coverProfile == "" {
-		var err error
-		coverProfile, err = generateCoverProfile(moduleDir, patterns, opts.Stderr)
-		if err != nil {
-			return nil, fmt.Errorf("generating coverage: %w", err)
-		}
-		defer func() { _ = os.Remove(coverProfile) }()
-	} else {
-		// Validate user-supplied cover profile path.
-		coverProfile = filepath.Clean(coverProfile)
-		info, err := os.Stat(coverProfile)
-		if err != nil {
-			return nil, fmt.Errorf("cover profile %q: %w", coverProfile, err)
-		}
-		if info.IsDir() {
-			return nil, fmt.Errorf("cover profile %q is a directory, not a file", coverProfile)
-		}
-	}
-
-	// Step 2: Compute cyclomatic complexity for all functions.
-	absPaths, err := resolvePatterns(patterns, moduleDir)
+	// Step 1: Get line coverage via provider.
+	funcCoverages, err := opts.LineCoverageProvider.Coverage(patterns, moduleDir, opts.CoverProfile)
 	if err != nil {
-		return nil, fmt.Errorf("resolving patterns: %w", err)
+		return nil, fmt.Errorf("line coverage: %w", err)
 	}
 
-	complexityStats := gocyclo.Analyze(absPaths, testFileRegexp)
-
-	// Step 3: Parse coverage profile for per-function coverage.
-	funcCoverages, err := ParseCoverProfile(coverProfile, moduleDir, opts.Stderr)
+	// Step 2: Compute cyclomatic complexity via provider.
+	complexityStats, err := opts.ComplexityProvider.Analyze(patterns, moduleDir)
 	if err != nil {
-		return nil, fmt.Errorf("parsing coverage profile: %w", err)
+		return nil, fmt.Errorf("complexity analysis: %w", err)
 	}
 
-	// Step 4: Build coverage lookup map (file:line → coverage).
+	// Step 3: Build coverage lookup map (file:line → coverage).
+	// buildCoverMap and coverMaps stay in analyze.go (D8).
 	coverMap := buildCoverMap(funcCoverages)
+
+	// Step 4: Resolve contract coverage via provider (if set).
+	// ContractCoverageProvider takes precedence over the deprecated
+	// ContractCoverageFunc (D7).
+	if opts.ContractCoverageProvider != nil {
+		ccFunc, degradedPkgs, ccErr := opts.ContractCoverageProvider.Build(patterns, moduleDir)
+		if ccErr != nil {
+			// Graceful degradation: log warning, continue without
+			// GazeCRAP (consistent with nil ContractCoverageFunc).
+			if opts.Stderr != nil {
+				_, _ = fmt.Fprintf(opts.Stderr, "warning: contract coverage provider failed: %v\n", ccErr)
+			}
+		} else {
+			if ccFunc != nil {
+				opts.ContractCoverageFunc = ccFunc
+			}
+			if len(degradedPkgs) > 0 {
+				opts.SSADegradedPackages = append(opts.SSADegradedPackages, degradedPkgs...)
+			}
+		}
+	}
 
 	// Step 5: Join complexity with coverage and compute CRAP.
 	scores := computeScores(complexityStats, coverMap, opts)
@@ -152,76 +175,12 @@ func Analyze(patterns []string, moduleDir string, opts Options) (*Report, error)
 	}, nil
 }
 
-// generateCoverProfile runs go test to produce a coverage profile.
-// The profile is written to a temporary file to avoid clobbering
-// any existing cover.out in the user's working directory.
-//
-// When go test exits non-zero but wrote a usable coverage profile
-// (non-empty file), the profile is preserved and a warning is
-// emitted to stderr. This supports partial coverage from runs where
-// some packages fail but others produce valid coverage data.
-// See design decision D1 in ci-gate-integrity.
-func generateCoverProfile(moduleDir string, patterns []string, stderr io.Writer) (string, error) {
-	tmpFile, err := os.CreateTemp("", "gaze-cover-*.out")
-	if err != nil {
-		return "", fmt.Errorf("creating temp cover profile: %w", err)
-	}
-	profilePath := tmpFile.Name()
-	_ = tmpFile.Close()
 
-	// Build args for go test. Patterns come from Cobra positional
-	// args (already past flag parsing) and Go package patterns
-	// (e.g., "./...") are syntactically distinct from flags.
-	// Note: do NOT use "--" separator here — go test doesn't
-	// support POSIX-style "--" and would ignore the patterns.
-	//
-	// The -short flag skips heavyweight tests (e.g., self-check)
-	// that would re-invoke go test, causing recursive subprocess
-	// chains. Coverage data from unit + integration tests is
-	// sufficient for CRAP score computation.
-	args := []string{"test", "-short", "-coverprofile=" + profilePath}
-	args = append(args, patterns...)
 
-	cmd := exec.Command("go", args...)
-	cmd.Dir = moduleDir
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// Check if profile was written despite non-zero exit.
-		// go test -coverprofile writes coverage data per-package
-		// as each completes, so partial profiles are usable even
-		// when later packages fail.
-		profilePath, recoverErr := recoverPartialProfile(profilePath, err, stderr)
-		if recoverErr != nil {
-			return "", fmt.Errorf("go test failed and produced no coverage: %s\n%s", err, string(output))
-		}
-		return profilePath, nil
-	}
-
-	return profilePath, nil
-}
-
-// recoverPartialProfile checks whether a coverage profile exists
-// and has non-zero size after a go test failure. If the profile is
-// usable, it emits a warning to stderr and returns the profile path.
-// If the profile is missing or empty, it cleans up and returns an
-// error. The stderr writer may be nil, in which case the warning
-// is suppressed.
-func recoverPartialProfile(profilePath string, testErr error, stderr io.Writer) (string, error) {
-	info, statErr := os.Stat(profilePath)
-	if statErr != nil || info.Size() == 0 {
-		_ = os.Remove(profilePath)
-		return "", fmt.Errorf("profile missing or empty after test failure")
-	}
-	// Profile exists with data — warn and continue.
-	if stderr != nil {
-		_, _ = fmt.Fprintf(stderr, "warning: go test exited with error (partial coverage used): %s\n", testErr)
-	}
-	return profilePath, nil
-}
-
-// resolvePatterns converts Go package patterns (./...) to filesystem
-// paths that gocyclo can walk.
-func resolvePatterns(patterns []string, moduleDir string) ([]string, error) {
+// ResolvePatterns converts Go package patterns (./...) to filesystem
+// paths that tools like gocyclo can walk. Exported for use by Go
+// provider adapters in internal/provider/goprovider/ (see D9).
+func ResolvePatterns(patterns []string, moduleDir string) ([]string, error) {
 	var paths []string
 	for _, p := range patterns {
 		if p == "./..." {
@@ -264,17 +223,17 @@ func buildCoverMap(coverages []FuncCoverage) coverMaps {
 	return coverMaps{exact: exact, basename: base}
 }
 
-// lookupCoverage finds the coverage for a gocyclo Stat by matching
-// on file path and line number.
-func lookupCoverage(stat gocyclo.Stat, maps coverMaps) float64 {
+// lookupCoverage finds the coverage for a FunctionComplexity entry
+// by matching on file path and line number.
+func lookupCoverage(fc FunctionComplexity, maps coverMaps) float64 {
 	// Try exact match on absolute path + line.
-	key := coverKey{file: stat.Pos.Filename, line: stat.Pos.Line}
+	key := coverKey{file: fc.File, line: fc.Line}
 	if pct, ok := maps.exact[key]; ok {
 		return pct
 	}
 
 	// Try matching by filename basename + line (handles path differences).
-	baseKey := coverKey{file: filepath.Base(stat.Pos.Filename), line: stat.Pos.Line}
+	baseKey := coverKey{file: filepath.Base(fc.File), line: fc.Line}
 	if pct, ok := maps.basename[baseKey]; ok {
 		return pct
 	}
@@ -283,29 +242,33 @@ func lookupCoverage(stat gocyclo.Stat, maps coverMaps) float64 {
 	return 0
 }
 
-// computeScores joins cyclomatic complexity stats with coverage data
+// computeScores joins cyclomatic complexity data with coverage data
 // and computes CRAP scores for each non-skipped function. Test files
 // and generated files (when opts.IgnoreGenerated is true) are
 // excluded. If opts.ContractCoverageFunc is set, GazeCRAP scores,
 // contract coverage percentages, and quadrant classifications are
 // computed for each function where the callback returns data.
-func computeScores(stats []gocyclo.Stat, coverMap coverMaps, opts Options) []Score {
+//
+// Accepts []FunctionComplexity (language-neutral) instead of
+// []gocyclo.Stat — the conversion happens inside the
+// ComplexityProvider (see design decision D4).
+func computeScores(stats []FunctionComplexity, coverMap coverMaps, opts Options) []Score {
 	generatedCache := make(map[string]bool)
 	var scores []Score
 
 	for _, stat := range stats {
 		// Skip test files (already excluded by ignore pattern but
 		// belt-and-suspenders).
-		if strings.HasSuffix(stat.Pos.Filename, "_test.go") {
+		if strings.HasSuffix(stat.File, "_test.go") {
 			continue
 		}
 
 		// Skip generated files when configured.
 		if opts.IgnoreGenerated {
-			gen, ok := generatedCache[stat.Pos.Filename]
+			gen, ok := generatedCache[stat.File]
 			if !ok {
-				gen = isGeneratedFile(stat.Pos.Filename)
-				generatedCache[stat.Pos.Filename] = gen
+				gen = isGeneratedFile(stat.File)
+				generatedCache[stat.File] = gen
 			}
 			if gen {
 				continue
@@ -316,10 +279,10 @@ func computeScores(stats []gocyclo.Stat, coverMap coverMaps, opts Options) []Sco
 		crapScore := Formula(stat.Complexity, covPct)
 
 		score := Score{
-			Package:      stat.PkgName,
-			Function:     stat.FuncName,
-			File:         stat.Pos.Filename,
-			Line:         stat.Pos.Line,
+			Package:      stat.Package,
+			Function:     stat.Function,
+			File:         stat.File,
+			Line:         stat.Line,
 			Complexity:   stat.Complexity,
 			LineCoverage: covPct,
 			CRAP:         crapScore,
@@ -327,7 +290,7 @@ func computeScores(stats []gocyclo.Stat, coverMap coverMaps, opts Options) []Sco
 
 		// Compute GazeCRAP if contract coverage is available.
 		if opts.ContractCoverageFunc != nil {
-			ccInfo, ok := opts.ContractCoverageFunc(stat.PkgName, stat.FuncName)
+			ccInfo, ok := opts.ContractCoverageFunc(stat.Package, stat.Function)
 			if ok {
 				gazeCRAP := Formula(stat.Complexity, ccInfo.Percentage)
 				quadrant := ClassifyQuadrant(
@@ -387,9 +350,6 @@ func assignFixStrategy(s Score, crapThreshold float64) *FixStrategy {
 	fs := FixAddTests
 	return &fs
 }
-
-// testFileRegexp matches Go test files by suffix.
-var testFileRegexp = regexp.MustCompile(`_test\.go$`)
 
 // generatedRegexp matches the Go convention for generated file headers:
 // "^// Code generated .* DO NOT EDIT\.$"

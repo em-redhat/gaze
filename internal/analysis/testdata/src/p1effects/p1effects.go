@@ -151,6 +151,48 @@ func (c *Container) WriteToStructMap() {
 	c.M["key"] = 42
 }
 
+// --- Non-io.Writer Write method (issue #109) ---
+
+// Notifier has a Write method but does NOT implement io.Writer
+// because its signature is Write(string), not Write([]byte) (int, error).
+type Notifier struct{}
+
+// Write sends a notification. This is NOT io.Writer.Write.
+func (n *Notifier) Write(msg string) {}
+
+// SendNote calls Notifier.Write. Should NOT produce WriterOutput
+// because Notifier does not implement io.Writer.
+func SendNote(n *Notifier) {
+	n.Write("hello")
+}
+
+// --- Custom http.ResponseWriter implementation (issue #132) ---
+
+// CustomResponseWriter implements http.ResponseWriter with a custom type.
+type CustomResponseWriter struct {
+	code int
+	body []byte
+}
+
+// Header returns the response headers.
+func (c *CustomResponseWriter) Header() http.Header { return http.Header{} }
+
+// Write writes the response body.
+func (c *CustomResponseWriter) Write(b []byte) (int, error) {
+	c.body = append(c.body, b...)
+	return len(b), nil
+}
+
+// WriteHeader sets the status code.
+func (c *CustomResponseWriter) WriteHeader(code int) { c.code = code }
+
+// HandleCustomRW writes to a custom http.ResponseWriter implementation.
+// Should produce HTTPResponseWrite, NOT WriterOutput.
+func HandleCustomRW(w *CustomResponseWriter) {
+	w.WriteHeader(200)
+	w.Write([]byte("ok"))
+}
+
 // --- Pure function (no P1 effects) ---
 
 // PureP1 has no P1 side effects.

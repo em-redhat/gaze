@@ -3,6 +3,7 @@ package loader_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/unbound-force/gaze/internal/loader"
@@ -147,5 +148,89 @@ func TestLoadModule_ExcludesBrokenPackages(t *testing.T) {
 	}
 	if !foundValid {
 		t.Error("expected valid package 'example.com/testmod/valid' in result")
+	}
+}
+
+func TestFindModuleRoot_AtRoot(t *testing.T) {
+	dir := t.TempDir()
+	goMod := filepath.Join(dir, "go.mod")
+	if err := os.WriteFile(goMod, []byte("module example.com/test\n\ngo 1.21\n"), 0o644); err != nil {
+		t.Fatalf("writing go.mod: %v", err)
+	}
+
+	got, err := loader.FindModuleRoot(dir)
+	if err != nil {
+		t.Fatalf("FindModuleRoot(%q) returned error: %v", dir, err)
+	}
+	if got != dir {
+		t.Errorf("FindModuleRoot(%q) = %q, want %q", dir, got, dir)
+	}
+}
+
+func TestFindModuleRoot_FromSubdirectory(t *testing.T) {
+	root := t.TempDir()
+	goMod := filepath.Join(root, "go.mod")
+	if err := os.WriteFile(goMod, []byte("module example.com/test\n\ngo 1.21\n"), 0o644); err != nil {
+		t.Fatalf("writing go.mod: %v", err)
+	}
+
+	deepDir := filepath.Join(root, "a", "b", "c")
+	if err := os.MkdirAll(deepDir, 0o755); err != nil {
+		t.Fatalf("creating subdirectories: %v", err)
+	}
+
+	got, err := loader.FindModuleRoot(deepDir)
+	if err != nil {
+		t.Fatalf("FindModuleRoot(%q) returned error: %v", deepDir, err)
+	}
+	if got != root {
+		t.Errorf("FindModuleRoot(%q) = %q, want %q", deepDir, got, root)
+	}
+}
+
+func TestFindModuleRoot_NoGoMod(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := loader.FindModuleRoot(dir)
+	if err == nil {
+		t.Fatal("FindModuleRoot() expected error for directory without go.mod, got nil")
+	}
+	if !strings.Contains(err.Error(), "go.mod") {
+		t.Errorf("error message should contain 'go.mod', got: %v", err)
+	}
+}
+
+func TestFindModuleRoot_NestedModules(t *testing.T) {
+	root := t.TempDir()
+
+	// Write go.mod at root level.
+	rootGoMod := filepath.Join(root, "go.mod")
+	if err := os.WriteFile(rootGoMod, []byte("module example.com/root\n\ngo 1.21\n"), 0o644); err != nil {
+		t.Fatalf("writing root go.mod: %v", err)
+	}
+
+	// Write go.mod in sub/ (nested module).
+	subDir := filepath.Join(root, "sub")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("creating sub dir: %v", err)
+	}
+	subGoMod := filepath.Join(subDir, "go.mod")
+	if err := os.WriteFile(subGoMod, []byte("module example.com/root/sub\n\ngo 1.21\n"), 0o644); err != nil {
+		t.Fatalf("writing sub go.mod: %v", err)
+	}
+
+	// Create sub/deep/ directory (no go.mod here).
+	deepDir := filepath.Join(subDir, "deep")
+	if err := os.MkdirAll(deepDir, 0o755); err != nil {
+		t.Fatalf("creating deep dir: %v", err)
+	}
+
+	// FindModuleRoot from sub/deep should find sub/ (nearest ancestor), not root.
+	got, err := loader.FindModuleRoot(deepDir)
+	if err != nil {
+		t.Fatalf("FindModuleRoot(%q) returned error: %v", deepDir, err)
+	}
+	if got != subDir {
+		t.Errorf("FindModuleRoot(%q) = %q, want %q (nearest ancestor with go.mod)", deepDir, got, subDir)
 	}
 }

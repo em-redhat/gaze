@@ -122,6 +122,7 @@ func TestAnalyzePackageCoverage_ValidPackage(t *testing.T) {
 	var stderr bytes.Buffer
 	reports, _ := analyzePackageCoverage(
 		"github.com/unbound-force/gaze/internal/quality/testdata/src/welltested",
+		".",
 		gazeConfig,
 		&stderr,
 	)
@@ -138,6 +139,7 @@ func TestAnalyzePackageCoverage_InvalidPackage(t *testing.T) {
 	var stderr bytes.Buffer
 	reports, _ := analyzePackageCoverage(
 		"github.com/nonexistent/does/not/exist",
+		".",
 		gazeConfig,
 		&stderr,
 	)

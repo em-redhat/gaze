@@ -16,6 +16,7 @@ import (
 	"github.com/unbound-force/gaze/internal/crap"
 	"github.com/unbound-force/gaze/internal/docscan"
 	"github.com/unbound-force/gaze/internal/loader"
+	"github.com/unbound-force/gaze/internal/provider/goprovider"
 	"github.com/unbound-force/gaze/internal/quality"
 	"github.com/unbound-force/gaze/internal/report"
 	"github.com/unbound-force/gaze/internal/taxonomy"
@@ -23,10 +24,11 @@ import (
 
 // crapStepResult holds the outputs of runCRAPStep.
 type crapStepResult struct {
-	JSON           json.RawMessage
-	CRAPload       int
-	GazeCRAPload   *int
-	TotalFunctions int
+	JSON                json.RawMessage
+	CRAPload            int
+	GazeCRAPload        *int
+	TotalFunctions      int
+	SSADegradedPackages []string
 }
 
 // runCRAPStep runs the CRAP analysis pipeline and returns the JSON output
@@ -38,16 +40,18 @@ type crapStepResult struct {
 // reads the supplied file directly instead of spawning go test internally
 // (FR-001, FR-002). An empty string uses the default internal generation path.
 //
-// contractCoverageFunc is an optional callback for GazeCRAP scoring. When
-// non-nil, it is set on crap.Options.ContractCoverageFunc, enabling
+// ccProvider is an optional ContractCoverageProvider for GazeCRAP scoring.
+// When non-nil, it is set on crap.Options.ContractCoverageProvider, enabling
 // GazeCRAP scores, quadrant classification, and GazeCRAPload computation.
 // When nil, only line-coverage-based CRAP scores are produced (spec 022).
-func runCRAPStep(patterns []string, moduleDir string, coverProfile string, stderr io.Writer, contractCoverageFunc func(string, string) (crap.ContractCoverageInfo, bool)) (*crapStepResult, error) {
+func runCRAPStep(patterns []string, moduleDir string, coverProfile string, stderr io.Writer, ccProvider crap.ContractCoverageProvider) (*crapStepResult, error) {
 	opts := crap.DefaultOptions()
 	opts.CoverProfile = coverProfile
 	opts.Stderr = stderr
-	if contractCoverageFunc != nil {
-		opts.ContractCoverageFunc = contractCoverageFunc
+	opts.ComplexityProvider = goprovider.NewComplexityProvider()
+	opts.LineCoverageProvider = goprovider.NewLineCoverageProvider(stderr)
+	if ccProvider != nil {
+		opts.ContractCoverageProvider = ccProvider
 	}
 
 	rpt, err := crap.Analyze(patterns, moduleDir, opts)
@@ -63,10 +67,11 @@ func runCRAPStep(patterns []string, moduleDir string, coverProfile string, stder
 	}
 
 	res := &crapStepResult{
-		JSON:           raw,
-		CRAPload:       rpt.Summary.CRAPload,
-		GazeCRAPload:   rpt.Summary.GazeCRAPload,
-		TotalFunctions: rpt.Summary.TotalFunctions,
+		JSON:                raw,
+		CRAPload:            rpt.Summary.CRAPload,
+		GazeCRAPload:        rpt.Summary.GazeCRAPload,
+		TotalFunctions:      rpt.Summary.TotalFunctions,
+		SSADegradedPackages: rpt.Summary.SSADegradedPackages,
 	}
 	return res, nil
 }
@@ -91,7 +96,7 @@ func runQualityStep(patterns []string, moduleDir string, stderr io.Writer) (*qua
 		return nil, fmt.Errorf("no packages matched patterns %v", patterns)
 	}
 
-	gazeConfig := loadGazeConfigBestEffort()
+	gazeConfig := loadGazeConfigBestEffort(moduleDir)
 
 	// Hoist LoadModule out of the per-package loop — O(1) instead of O(n).
 	modPkgs := resolveModulePackages(moduleDir)
@@ -196,7 +201,7 @@ func runClassifyStep(patterns []string, moduleDir string) (*classifyStepResult, 
 	// Hoist LoadModule out of the per-package loop — O(1) instead of O(n).
 	modPkgs := resolveModulePackages(moduleDir)
 
-	gazeConfig := loadGazeConfigBestEffort()
+	gazeConfig := loadGazeConfigBestEffort(moduleDir)
 	var allResults []taxonomy.AnalysisResult
 
 	for _, pkgPath := range pkgPaths {
@@ -230,7 +235,7 @@ func runClassifyStep(patterns []string, moduleDir string) (*classifyStepResult, 
 
 // runDocscanStep runs the documentation scanner and returns the JSON output.
 func runDocscanStep(moduleDir string) (json.RawMessage, error) {
-	cfg := loadGazeConfigBestEffort()
+	cfg := loadGazeConfigBestEffort(moduleDir)
 	scanOpts := docscan.ScanOptions{Config: cfg}
 
 	docs, err := docscan.Scan(moduleDir, scanOpts)
@@ -294,11 +299,15 @@ func runClassifyResults(
 // degrade gracefully.
 func resolveModulePackages(moduleDir string) []*packages.Package {
 	if moduleDir == "" {
-		var err error
-		moduleDir, err = os.Getwd()
+		cwd, err := os.Getwd()
 		if err != nil {
 			return nil
 		}
+		root, findErr := loader.FindModuleRoot(cwd)
+		if findErr != nil {
+			return nil
+		}
+		moduleDir = root
 	}
 	modResult, err := loader.LoadModule(moduleDir)
 	if err != nil {
@@ -307,14 +316,10 @@ func resolveModulePackages(moduleDir string) []*packages.Package {
 	return modResult.Packages
 }
 
-// loadGazeConfigBestEffort loads the GazeConfig from cwd, falling back to
-// the default config on any error.
-func loadGazeConfigBestEffort() *config.GazeConfig {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return config.DefaultConfig()
-	}
-	cfgPath := filepath.Join(cwd, ".gaze.yaml")
+// loadGazeConfigBestEffort loads the GazeConfig from the module root,
+// falling back to the default config on any error.
+func loadGazeConfigBestEffort(moduleDir string) *config.GazeConfig {
+	cfgPath := filepath.Join(moduleDir, ".gaze.yaml")
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return config.DefaultConfig()

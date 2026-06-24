@@ -6,7 +6,6 @@ package crap
 import (
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -50,7 +49,7 @@ func BuildContractCoverageFunc(
 	}
 
 	// Load config once for all packages.
-	gazeConfig := loadGazeConfigBestEffort()
+	gazeConfig := loadGazeConfigBestEffort(moduleDir)
 
 	// Build coverage map: "shortPkg:qualifiedName" -> coverage info.
 	coverageMap := make(map[string]ContractCoverageInfo)
@@ -79,7 +78,7 @@ func BuildContractCoverageFunc(
 			}
 		}
 
-		reports, degradedPkg := analyzePackageCoverage(pkgPath, gazeConfig, stderr, aiMapperFn...)
+		reports, degradedPkg := analyzePackageCoverage(pkgPath, moduleDir, gazeConfig, stderr, aiMapperFn...)
 		if degradedPkg != "" {
 			degradedPkgs = append(degradedPkgs, degradedPkg)
 		}
@@ -189,6 +188,7 @@ func resolvePackagePaths(patterns []string, moduleDir string) ([]string, error) 
 // mapping when non-nil. It is passed through to quality.Options.AIMapperFunc.
 func analyzePackageCoverage(
 	pkgPath string,
+	moduleDir string,
 	gazeConfig *config.GazeConfig,
 	stderr io.Writer,
 	aiMapperFn ...quality.AIMapperFunc,
@@ -207,7 +207,7 @@ func analyzePackageCoverage(
 	}
 
 	// Step 2: Classify (Spec 002).
-	classified := classifyResults(results, pkgPath, gazeConfig)
+	classified := classifyResults(results, pkgPath, moduleDir, gazeConfig)
 	if classified == nil {
 		return nil, ""
 	}
@@ -242,6 +242,7 @@ func analyzePackageCoverage(
 func classifyResults(
 	results []taxonomy.AnalysisResult,
 	pkgPath string,
+	moduleDir string,
 	cfg *config.GazeConfig,
 ) []taxonomy.AnalysisResult {
 	// Load the target package for AST access.
@@ -251,11 +252,7 @@ func classifyResults(
 	}
 
 	// Load the module for caller/interface analysis.
-	cwd, err := os.Getwd()
-	if err != nil {
-		cwd = ""
-	}
-	modResult, modErr := loader.LoadModule(cwd)
+	modResult, modErr := loader.LoadModule(moduleDir)
 	var modPkgs []*packages.Package
 	if modErr == nil {
 		modPkgs = modResult.Packages
@@ -321,17 +318,13 @@ func loadTestPackage(pkgPath string) (*packages.Package, error) {
 	return nil, fmt.Errorf("no test files found for %q", pkgPath)
 }
 
-// loadGazeConfigBestEffort loads the GazeConfig from cwd, falling
-// back to the default config on any error.
+// loadGazeConfigBestEffort loads the GazeConfig from the module root,
+// falling back to the default config on any error.
 //
 // NOTE: keep in sync with internal/aireport/runner_steps.go:loadGazeConfigBestEffort.
 // Consolidation deferred — see specs/022-report-gazecrap-pipeline/tasks.md.
-func loadGazeConfigBestEffort() *config.GazeConfig {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return config.DefaultConfig()
-	}
-	cfgPath := filepath.Join(cwd, ".gaze.yaml")
+func loadGazeConfigBestEffort(moduleDir string) *config.GazeConfig {
+	cfgPath := filepath.Join(moduleDir, ".gaze.yaml")
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return config.DefaultConfig()

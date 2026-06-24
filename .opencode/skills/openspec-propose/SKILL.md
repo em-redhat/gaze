@@ -39,7 +39,23 @@ When ready to implement, run /opsx-apply
    ```
    This creates a scaffolded change at `openspec/changes/<name>/` with `.openspec.yaml`.
 
-2a. **Create and checkout a branch**
+2a. **Check for uncommitted changes**
+
+   Before creating or switching branches, run
+   `git status --short`. If there are uncommitted changes
+   (staged, unstaged, or untracked files that appear
+   related to work):
+   - **STOP** and ask the user for confirmation before
+     switching branches. Show what uncommitted changes
+     exist and warn that switching branches with a dirty
+     working tree may cause changes to be applied to the
+     wrong branch.
+   - If the user confirms, proceed. If not, abort.
+   - Exception: if the user explicitly requested a new
+     change, this still requires confirmation -- never
+     silently switch branches with uncommitted work.
+
+2b. **Create and checkout a branch**
 
    ```bash
    git checkout -b opsx/<name>
@@ -50,7 +66,7 @@ When ready to implement, run /opsx-apply
    - If on a different `opsx/*` branch: **STOP** with error: "Already on branch `opsx/<other>` -- finish or archive that change first."
    - If on `main` or any non-opsx branch: create and checkout `opsx/<name>`.
 
-2b. **Retrieve context from Dewey**
+2c. **Retrieve context from Dewey**
 
    Before drafting the proposal, query Dewey for relevant context:
 

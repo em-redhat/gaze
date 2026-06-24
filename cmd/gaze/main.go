@@ -22,6 +22,7 @@ import (
 	"github.com/unbound-force/gaze/internal/crap"
 	"github.com/unbound-force/gaze/internal/docscan"
 	"github.com/unbound-force/gaze/internal/loader"
+	"github.com/unbound-force/gaze/internal/provider/goprovider"
 	"github.com/unbound-force/gaze/internal/quality"
 	"github.com/unbound-force/gaze/internal/report"
 	"github.com/unbound-force/gaze/internal/scaffold"
@@ -149,7 +150,11 @@ func loadConfig(path string, contractualThresh, incidentalThresh int) (*config.G
 		if err != nil {
 			return config.DefaultConfig(), nil
 		}
-		path = filepath.Join(cwd, ".gaze.yaml")
+		configDir := cwd
+		if moduleRoot, findErr := loader.FindModuleRoot(cwd); findErr == nil {
+			configDir = moduleRoot
+		}
+		path = filepath.Join(configDir, ".gaze.yaml")
 	}
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -293,7 +298,15 @@ func runClassify(
 		logger.Debug("could not determine working directory for module load", "err", err)
 		cwd = ""
 	}
-	modResult, modErr := loader.LoadModule(cwd)
+	moduleRoot := cwd
+	if cwd != "" {
+		if root, findErr := loader.FindModuleRoot(cwd); findErr == nil {
+			moduleRoot = root
+		} else {
+			logger.Warn("could not find module root; classification signals may be degraded", "err", findErr)
+		}
+	}
+	modResult, modErr := loader.LoadModule(moduleRoot)
 	var modPkgs []*packages.Package
 	if modErr != nil {
 		// Non-fatal: module loading failure means caller analysis
@@ -411,9 +424,11 @@ type crapParams struct {
 	// When nil, the production crap.Analyze is called.
 	analyzeFunc func([]string, string, crap.Options) (*crap.Report, error)
 
-	// coverageFunc overrides crap.BuildContractCoverageFunc for testing.
-	// When nil, the production crap.BuildContractCoverageFunc is called.
-	coverageFunc func([]string, string, io.Writer) (func(string, string) (crap.ContractCoverageInfo, bool), []string)
+	// contractProvider overrides the production GoContractCoverageProvider
+	// for testing. When non-nil, it is set on opts.ContractCoverageProvider
+	// before calling crap.Analyze. When nil and no provider is already set,
+	// the production GoContractCoverageProvider is constructed.
+	contractProvider crap.ContractCoverageProvider
 }
 
 func newSchemaCmd() *cobra.Command {
@@ -438,17 +453,15 @@ func runCrap(p crapParams) error {
 	}
 
 	// Wire the quality pipeline to provide contract coverage for
-	// GazeCRAP scoring. This is best-effort: if quality analysis
-	// fails for any package, GazeCRAP falls back to unavailable.
-	if p.opts.ContractCoverageFunc == nil {
-		var ccFunc func(string, string) (crap.ContractCoverageInfo, bool)
-		var degradedPkgs []string
-
-		if p.coverageFunc != nil {
-			// Test override — use the injected coverage function.
-			ccFunc, degradedPkgs = p.coverageFunc(p.patterns, p.moduleDir, p.stderr)
+	// GazeCRAP scoring via ContractCoverageProvider. This is
+	// best-effort: if quality analysis fails for any package,
+	// GazeCRAP falls back to unavailable.
+	if p.opts.ContractCoverageProvider == nil {
+		if p.contractProvider != nil {
+			// Test override — use the injected provider.
+			p.opts.ContractCoverageProvider = p.contractProvider
 		} else {
-			// Production path — build AI mapper if requested.
+			// Production path — construct GoContractCoverageProvider.
 			var aiMapperFn quality.AIMapperFunc
 			if p.aiMapper != "" {
 				var aiErr error
@@ -457,16 +470,9 @@ func runCrap(p crapParams) error {
 					return aiErr
 				}
 			}
-			ccFunc, degradedPkgs = crap.BuildContractCoverageFunc(
-				p.patterns, p.moduleDir, p.stderr, aiMapperFn,
+			p.opts.ContractCoverageProvider = goprovider.NewContractCoverageProvider(
+				p.stderr, aiMapperFn,
 			)
-		}
-
-		if ccFunc != nil {
-			p.opts.ContractCoverageFunc = ccFunc
-		}
-		if len(degradedPkgs) > 0 {
-			p.opts.SSADegradedPackages = degradedPkgs
 		}
 	}
 
@@ -723,15 +729,21 @@ If no coverage profile is provided, runs 'go test -coverprofile'
 automatically.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			moduleDir, err := os.Getwd()
+			cwd, err := os.Getwd()
 			if err != nil {
 				return fmt.Errorf("getting working directory: %w", err)
+			}
+			moduleDir, err := loader.FindModuleRoot(cwd)
+			if err != nil {
+				return fmt.Errorf("finding module root: %w", err)
 			}
 			opts := crap.DefaultOptions()
 			opts.CoverProfile = coverProfile
 			opts.CRAPThreshold = crapThreshold
 			opts.GazeCRAPThreshold = gazeCrapThreshold
 			opts.Stderr = os.Stderr
+			opts.ComplexityProvider = goprovider.NewComplexityProvider()
+			opts.LineCoverageProvider = goprovider.NewLineCoverageProvider(os.Stderr)
 			return runCrap(crapParams{
 				patterns:        args,
 				format:          format,
@@ -788,9 +800,13 @@ func runDocscan(p docscanParams) error {
 
 	// Determine the repo root: walk up from the package directory
 	// to find the go.mod file, defaulting to cwd.
-	repoRoot, err := os.Getwd()
+	cwd, err := os.Getwd()
 	if err != nil {
-		repoRoot = "."
+		cwd = "."
+	}
+	repoRoot := cwd
+	if root, findErr := loader.FindModuleRoot(cwd); findErr == nil {
+		repoRoot = root
 	}
 
 	// Resolve PackageDir from the import path if it corresponds
@@ -1185,27 +1201,6 @@ Requires the target package to have existing test files.`,
 	return cmd
 }
 
-// findModuleRoot walks up from the current working directory to find
-// the nearest directory containing a go.mod file (the module root).
-// This ensures self-check always analyzes the full module, even when
-// invoked from a subdirectory.
-func findModuleRoot() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("getting working directory: %w", err)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", fmt.Errorf("no go.mod found in %q or any parent directory", dir)
-		}
-		dir = parent
-	}
-}
-
 // selfCheckParams holds the parsed flags for the self-check command.
 type selfCheckParams struct {
 	format          string
@@ -1240,17 +1235,28 @@ func runSelfCheck(p selfCheckParams) error {
 
 	findRoot := p.moduleRootFunc
 	if findRoot == nil {
-		findRoot = findModuleRoot
+		findRoot = func() (string, error) {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return "", fmt.Errorf("getting working directory: %w", err)
+			}
+			return loader.FindModuleRoot(cwd)
+		}
 	}
 	moduleDir, err := findRoot()
 	if err != nil {
 		return fmt.Errorf("finding module root: %w", err)
 	}
 
+	selfOpts := crap.DefaultOptions()
+	selfOpts.Stderr = p.stderr
+	selfOpts.ComplexityProvider = goprovider.NewComplexityProvider()
+	selfOpts.LineCoverageProvider = goprovider.NewLineCoverageProvider(p.stderr)
+
 	cp := crapParams{
 		patterns:        []string{"./..."},
 		format:          p.format,
-		opts:            crap.DefaultOptions(),
+		opts:            selfOpts,
 		maxCrapload:     p.maxCrapload,
 		maxGazeCrapload: p.maxGazeCrapload,
 		moduleDir:       moduleDir,
@@ -1258,7 +1264,6 @@ func runSelfCheck(p selfCheckParams) error {
 		stderr:          p.stderr,
 		thresholdSet:    p.thresholdSet,
 	}
-	cp.opts.Stderr = p.stderr
 
 	doCrap := p.runCrapFunc
 	if doCrap == nil {
@@ -1372,6 +1377,10 @@ func runReport(p reportParams) error {
 	if err != nil {
 		cwd = "."
 	}
+	moduleDir, findErr := loader.FindModuleRoot(cwd)
+	if findErr != nil {
+		return fmt.Errorf("finding module root: %w", findErr)
+	}
 
 	timeout := p.aiTimeout
 	if timeout <= 0 {
@@ -1401,7 +1410,7 @@ func runReport(p reportParams) error {
 		// Load system prompt only in text mode (FR-015): in json mode the
 		// prompt file is never needed and a permission error must not block output.
 		var promptErr error
-		systemPrompt, promptErr = aireport.LoadPrompt(cwd)
+		systemPrompt, promptErr = aireport.LoadPrompt(moduleDir)
 		if promptErr != nil {
 			return fmt.Errorf("loading system prompt: %w", promptErr)
 		}
@@ -1411,7 +1420,7 @@ func runReport(p reportParams) error {
 
 	opts := aireport.RunnerOptions{
 		Patterns:        p.patterns,
-		ModuleDir:       cwd,
+		ModuleDir:       moduleDir,
 		Adapter:         adapter,
 		AdapterCfg:      adapterCfg,
 		SystemPrompt:    systemPrompt,

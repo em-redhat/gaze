@@ -193,6 +193,12 @@ func WriteComparisonText(w io.Writer, result *ComparisonResult) error {
 
 // writeComparisonDeltaTable writes a table of function deltas
 // filtered by the given status. Omitted if no deltas match.
+//
+// When any matching delta has GazeCRAP data, the table uses a
+// two-row-per-function format: function name on its own line,
+// then indented GazeCRAP row (first) and CRAP row (second).
+// When no GazeCRAP data is available, the single-row format is
+// preserved for backward compatibility.
 func writeComparisonDeltaTable(w io.Writer, title string, deltas []FunctionDelta, status FunctionStatus) {
 	var matching []FunctionDelta
 	for _, d := range deltas {
@@ -204,14 +210,48 @@ func writeComparisonDeltaTable(w io.Writer, title string, deltas []FunctionDelta
 		return
 	}
 
+	// Detect whether any matching delta has GazeCRAP data.
+	hasGaze := false
+	for _, d := range matching {
+		if d.GazeCRAPDelta != nil {
+			hasGaze = true
+			break
+		}
+	}
+
 	_, _ = fmt.Fprintf(w, "\n%s:\n", title)
 	_, _ = fmt.Fprintf(w, "  %-40s  %-10s  %-10s  %-10s\n",
 		"Function", "Baseline", "Current", "Delta")
-	for _, d := range matching {
-		label := fmt.Sprintf("%s (%s)",
-			d.Current.Function, shortenPath(d.Current.File))
-		_, _ = fmt.Fprintf(w, "  %-40s  %-10.1f  %-10.1f  %+.1f\n",
-			label, d.Baseline.CRAP, d.Current.CRAP, d.CRAPDelta)
+
+	if hasGaze {
+		// Two-row format: function name on its own line,
+		// then indented GazeCRAP (first) and CRAP (second).
+		for _, d := range matching {
+			label := fmt.Sprintf("%s (%s)",
+				d.Current.Function, shortenPath(d.Current.File))
+			_, _ = fmt.Fprintf(w, "  %s\n", label)
+
+			if d.GazeCRAPDelta != nil &&
+				d.Baseline.GazeCRAP != nil &&
+				d.Current.GazeCRAP != nil {
+				_, _ = fmt.Fprintf(w, "    %-38s  %-10.1f  %-10.1f  %+.1f\n",
+					"GazeCRAP", *d.Baseline.GazeCRAP,
+					*d.Current.GazeCRAP, *d.GazeCRAPDelta)
+			}
+
+			_, _ = fmt.Fprintf(w, "    %-38s  %-10.1f  %-10.1f  %+.1f\n",
+				"CRAP", d.Baseline.CRAP, d.Current.CRAP,
+				d.CRAPDelta)
+		}
+	} else {
+		// Single-row format (no GazeCRAP data).
+		for _, d := range matching {
+			label := fmt.Sprintf("%s (%s)",
+				d.Current.Function, shortenPath(d.Current.File))
+			_, _ = fmt.Fprintf(w, "  %-40s  %-10.1f  %-10.1f  %+.1f\n",
+				label, d.Baseline.CRAP, d.Current.CRAP,
+				d.CRAPDelta)
+		}
 	}
 }
 

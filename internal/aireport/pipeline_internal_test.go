@@ -14,7 +14,7 @@ import (
 // synthetic success results. Individual steps can be overridden after.
 func fakeSteps() pipelineStepFuncs {
 	return pipelineStepFuncs{
-		crapStep: func(_ []string, _ string, _ string, _ io.Writer, _ func(string, string) (crap.ContractCoverageInfo, bool)) (*crapStepResult, error) {
+		crapStep: func(_ []string, _ string, _ string, _ io.Writer, _ crap.ContractCoverageProvider) (*crapStepResult, error) {
 			return &crapStepResult{
 				JSON:           json.RawMessage(`{"crap":"ok"}`),
 				CRAPload:       5,
@@ -99,10 +99,45 @@ func TestRunProductionPipeline_AllStepsSucceed(t *testing.T) {
 	}
 }
 
+func TestRunProductionPipeline_CRAPStepSSADegradation(t *testing.T) {
+	var stderr bytes.Buffer
+	steps := fakeSteps()
+	steps.crapStep = func(_ []string, _ string, _ string, _ io.Writer, _ crap.ContractCoverageProvider) (*crapStepResult, error) {
+		return &crapStepResult{
+			JSON:                json.RawMessage(`{"crap":"ok"}`),
+			CRAPload:            5,
+			GazeCRAPload:        intPtr(3),
+			TotalFunctions:      20,
+			SSADegradedPackages: []string{"pkg/degraded-from-crap"},
+		}, nil
+	}
+
+	payload, err := runProductionPipeline([]string{"./..."}, "/tmp", "", &stderr, steps)
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+
+	// SSA degradation from CRAP step should propagate to summary.
+	if !payload.Summary.SSADegraded {
+		t.Error("expected SSADegraded=true when CRAP step reports degraded packages")
+	}
+	found := false
+	for _, pkg := range payload.Summary.SSADegradedPackages {
+		if pkg == "pkg/degraded-from-crap" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected SSADegradedPackages to contain 'pkg/degraded-from-crap', got %v",
+			payload.Summary.SSADegradedPackages)
+	}
+}
+
 func TestRunProductionPipeline_CRAPStepFails(t *testing.T) {
 	var stderr bytes.Buffer
 	steps := fakeSteps()
-	steps.crapStep = func(_ []string, _ string, _ string, _ io.Writer, _ func(string, string) (crap.ContractCoverageInfo, bool)) (*crapStepResult, error) {
+	steps.crapStep = func(_ []string, _ string, _ string, _ io.Writer, _ crap.ContractCoverageProvider) (*crapStepResult, error) {
 		return nil, fmt.Errorf("crap analysis failed")
 	}
 
@@ -209,7 +244,7 @@ func TestRunProductionPipeline_DocscanStepFails(t *testing.T) {
 func TestRunProductionPipeline_MultipleStepsFail(t *testing.T) {
 	var stderr bytes.Buffer
 	steps := fakeSteps()
-	steps.crapStep = func(_ []string, _ string, _ string, _ io.Writer, _ func(string, string) (crap.ContractCoverageInfo, bool)) (*crapStepResult, error) {
+	steps.crapStep = func(_ []string, _ string, _ string, _ io.Writer, _ crap.ContractCoverageProvider) (*crapStepResult, error) {
 		return nil, fmt.Errorf("crap failed")
 	}
 	steps.qualityStep = func(_ []string, _ string, _ io.Writer) (*qualityStepResult, error) {
@@ -244,7 +279,7 @@ func TestRunProductionPipeline_EmptyPatterns(t *testing.T) {
 
 	// Track whether any step was called.
 	called := false
-	steps.crapStep = func(_ []string, _ string, _ string, _ io.Writer, _ func(string, string) (crap.ContractCoverageInfo, bool)) (*crapStepResult, error) {
+	steps.crapStep = func(_ []string, _ string, _ string, _ io.Writer, _ crap.ContractCoverageProvider) (*crapStepResult, error) {
 		called = true
 		return nil, nil
 	}
@@ -268,7 +303,7 @@ func TestRunProductionPipeline_GazeCRAPloadFlowsThroughPipeline(t *testing.T) {
 	steps := fakeSteps()
 
 	// Override crapStep to return a known GazeCRAPload value.
-	steps.crapStep = func(_ []string, _ string, _ string, _ io.Writer, _ func(string, string) (crap.ContractCoverageInfo, bool)) (*crapStepResult, error) {
+	steps.crapStep = func(_ []string, _ string, _ string, _ io.Writer, _ crap.ContractCoverageProvider) (*crapStepResult, error) {
 		return &crapStepResult{
 			JSON:           json.RawMessage(`{"crap":"ok"}`),
 			CRAPload:       2,

@@ -5,6 +5,8 @@ package loader
 import (
 	"fmt"
 	"go/token"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
@@ -120,4 +122,22 @@ func LoadModule(dir string) (*ModuleResult, error) {
 		Packages: valid,
 		Fset:     fset,
 	}, nil
+}
+
+// FindModuleRoot walks up from startDir to find the nearest directory
+// containing a go.mod file (the module root). Returns the directory
+// path or an error if no go.mod is found in startDir or any parent
+// directory up to the filesystem root.
+func FindModuleRoot(startDir string) (string, error) {
+	dir := startDir
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("no go.mod found in %q or any parent directory", startDir)
+		}
+		dir = parent
+	}
 }

@@ -330,3 +330,8 @@ But this summary is optional. Sometimes the thinking IS the value.
 - **Do visualize** - A good diagram is worth many paragraphs
 - **Do explore the codebase** - Ground discussions in reality
 - **Do question assumptions** - Including the user's and your own
+- Don't switch branches without confirmation -- If
+  exploration leads to creating a proposal (which
+  requires a new `opsx/` branch), check for uncommitted
+  changes first and ask the user before switching.
+  Never silently leave uncommitted work behind.

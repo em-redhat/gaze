@@ -249,27 +249,13 @@ func detectP1CallEffects(
 	}
 
 	// Writer output and HTTP response writes via selector expressions.
+	// Check HTTP response writer first (more specific); fall through
+	// to generic io.Writer only when the receiver is not an
+	// http.ResponseWriter (issue #131).
 	if sel, ok := node.Fun.(*ast.SelectorExpr); ok {
-		if sel.Sel.Name == "Write" && isWriterType(info, sel.X) {
-			name := exprName(sel.X)
-			key := "writer:" + name
-			if !seen[key] {
-				seen[key] = true
-				loc := fset.Position(node.Pos()).String()
-				effects = append(effects, taxonomy.SideEffect{
-					ID:          taxonomy.GenerateID(pkg, funcName, string(taxonomy.WriterOutput), name),
-					Type:        taxonomy.WriterOutput,
-					Tier:        taxonomy.TierP1,
-					Location:    loc,
-					Description: fmt.Sprintf("writes to io.Writer '%s'", name),
-					Target:      name,
-				})
-			}
-		}
-
-		// HTTP response writes: calls to
-		// ResponseWriter.Write, .WriteHeader, .Header.
 		if isHTTPResponseWriter(info, sel.X) {
+			// HTTP response writes: calls to
+			// ResponseWriter.Write, .WriteHeader, .Header.
 			method := sel.Sel.Name
 			if method == "Write" || method == "WriteHeader" || method == "Header" {
 				name := exprName(sel.X)
@@ -286,6 +272,21 @@ func detectP1CallEffects(
 						Target:      name + "." + method,
 					})
 				}
+			}
+		} else if sel.Sel.Name == "Write" && isWriterType(info, sel.X) {
+			name := exprName(sel.X)
+			key := "writer:" + name
+			if !seen[key] {
+				seen[key] = true
+				loc := fset.Position(node.Pos()).String()
+				effects = append(effects, taxonomy.SideEffect{
+					ID:          taxonomy.GenerateID(pkg, funcName, string(taxonomy.WriterOutput), name),
+					Type:        taxonomy.WriterOutput,
+					Tier:        taxonomy.TierP1,
+					Location:    loc,
+					Description: fmt.Sprintf("writes to io.Writer '%s'", name),
+					Target:      name,
+				})
 			}
 		}
 	}
@@ -408,7 +409,32 @@ func isCloseCall(call *ast.CallExpr, info *types.Info) bool {
 	return true
 }
 
-// isWriterType checks if an expression implements io.Writer.
+// ioWriterInterface is a synthetically constructed io.Writer interface
+// type used for types.Implements checks. Built once at init time.
+//
+//	interface{ Write(p []byte) (n int, err error) }
+var ioWriterInterface *types.Interface
+
+func init() {
+	byteSlice := types.NewSlice(types.Typ[types.Byte])
+	sig := types.NewSignatureType(
+		nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, nil, "p", byteSlice)),
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "n", types.Typ[types.Int]),
+			types.NewVar(token.NoPos, nil, "err", types.Universe.Lookup("error").Type()),
+		),
+		false,
+	)
+	writeMethod := types.NewFunc(token.NoPos, nil, "Write", sig)
+	ioWriterInterface = types.NewInterfaceType([]*types.Func{writeMethod}, nil)
+	ioWriterInterface.Complete()
+}
+
+// isWriterType checks if an expression implements io.Writer by
+// verifying the full Write([]byte) (int, error) signature, not
+// just the method name. Uses types.Implements against a synthetic
+// io.Writer interface.
 func isWriterType(info *types.Info, expr ast.Expr) bool {
 	if info == nil {
 		return false
@@ -417,26 +443,25 @@ func isWriterType(info *types.Info, expr ast.Expr) bool {
 	if !ok {
 		return false
 	}
-	// Check if the type has a Write([]byte) (int, error) method.
-	mset := types.NewMethodSet(tv.Type)
-	for i := 0; i < mset.Len(); i++ {
-		if mset.At(i).Obj().Name() == "Write" {
-			return true
-		}
+	if types.Implements(tv.Type, ioWriterInterface) {
+		return true
 	}
 	// Also check pointer type.
-	ptrType := types.NewPointer(tv.Type)
-	mset = types.NewMethodSet(ptrType)
-	for i := 0; i < mset.Len(); i++ {
-		if mset.At(i).Obj().Name() == "Write" {
-			return true
-		}
-	}
-	return false
+	return types.Implements(types.NewPointer(tv.Type), ioWriterInterface)
 }
 
-// isHTTPResponseWriter checks if an expression has the
-// net/http.ResponseWriter interface type.
+// isHTTPResponseWriter checks if an expression implements the
+// net/http.ResponseWriter interface by verifying its method set
+// contains all three required methods: Header, Write, and WriteHeader.
+//
+// Write and WriteHeader signatures are verified exactly against
+// io.Writer and func(int) respectively. Header is checked by name
+// only because its return type (http.Header) is a named type that
+// cannot be synthetically constructed without importing net/http.
+//
+// This correctly handles type aliases, custom implementations,
+// and embedded interfaces — unlike the previous string comparison
+// approach.
 func isHTTPResponseWriter(info *types.Info, expr ast.Expr) bool {
 	if info == nil {
 		return false
@@ -445,7 +470,61 @@ func isHTTPResponseWriter(info *types.Info, expr ast.Expr) bool {
 	if !ok {
 		return false
 	}
-	return tv.Type.String() == "net/http.ResponseWriter"
+	return hasHTTPResponseWriterMethods(tv.Type) ||
+		hasHTTPResponseWriterMethods(types.NewPointer(tv.Type))
+}
+
+// hasHTTPResponseWriterMethods checks if a type's method set
+// contains Header(), Write([]byte)(int, error), and WriteHeader(int).
+func hasHTTPResponseWriterMethods(t types.Type) bool {
+	mset := types.NewMethodSet(t)
+	var hasHeader, hasWrite, hasWriteHeader bool
+	for i := 0; i < mset.Len(); i++ {
+		obj := mset.At(i).Obj()
+		sig, ok := obj.Type().(*types.Signature)
+		if !ok {
+			continue
+		}
+		switch obj.Name() {
+		case "Header":
+			// Accept any Header() method with zero params and one
+			// result. The return type is http.Header (a named type)
+			// which we cannot construct synthetically, but any type
+			// with all three method names and correct Write/WriteHeader
+			// signatures is effectively an http.ResponseWriter.
+			if sig.Params().Len() == 0 && sig.Results().Len() == 1 {
+				hasHeader = true
+			}
+		case "Write":
+			// Must match io.Writer: Write([]byte) (int, error).
+			if matchesWriteSignature(sig) {
+				hasWrite = true
+			}
+		case "WriteHeader":
+			// Must match WriteHeader(statusCode int).
+			if sig.Params().Len() == 1 && sig.Results().Len() == 0 &&
+				types.Identical(sig.Params().At(0).Type(), types.Typ[types.Int]) {
+				hasWriteHeader = true
+			}
+		}
+	}
+	return hasHeader && hasWrite && hasWriteHeader
+}
+
+// matchesWriteSignature checks if a signature matches
+// Write([]byte) (int, error) — the io.Writer.Write signature.
+func matchesWriteSignature(sig *types.Signature) bool {
+	if sig.Params().Len() != 1 || sig.Results().Len() != 2 {
+		return false
+	}
+	byteSlice := types.NewSlice(types.Typ[types.Byte])
+	if !types.Identical(sig.Params().At(0).Type(), byteSlice) {
+		return false
+	}
+	if !types.Identical(sig.Results().At(0).Type(), types.Typ[types.Int]) {
+		return false
+	}
+	return types.Identical(sig.Results().At(1).Type(), types.Universe.Lookup("error").Type())
 }
 
 // unwrapToIdent unwraps selector expressions, index expressions,

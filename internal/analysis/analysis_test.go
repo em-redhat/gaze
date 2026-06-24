@@ -663,6 +663,35 @@ func TestP1_HTTPResponseWrite(t *testing.T) {
 	if !hasEffect(result.SideEffects, taxonomy.HTTPResponseWrite) {
 		t.Error("expected HTTPResponseWrite for HandleHTTP")
 	}
+	// http.ResponseWriter embeds io.Writer, but the more specific
+	// HTTPResponseWrite classification must take precedence — no
+	// duplicate WriterOutput should be emitted (issue #131).
+	if hasEffect(result.SideEffects, taxonomy.WriterOutput) {
+		t.Error("http.ResponseWriter.Write must not produce WriterOutput (HTTPResponseWrite takes precedence)")
+	}
+}
+
+func TestP1_NonWriterWrite(t *testing.T) {
+	result := analyzeFunc(t, "p1effects", "SendNote")
+
+	// Notifier.Write(string) is NOT io.Writer.Write([]byte)(int, error),
+	// so no WriterOutput should be emitted. Regression test for issue #109.
+	if hasEffect(result.SideEffects, taxonomy.WriterOutput) {
+		t.Error("SendNote must not produce WriterOutput — Notifier.Write(string) is not io.Writer")
+	}
+}
+
+func TestP1_CustomResponseWriter(t *testing.T) {
+	result := analyzeFunc(t, "p1effects", "HandleCustomRW")
+
+	// Custom implementations of http.ResponseWriter should produce
+	// HTTPResponseWrite, not WriterOutput. Regression test for issue #132.
+	if !hasEffect(result.SideEffects, taxonomy.HTTPResponseWrite) {
+		t.Error("expected HTTPResponseWrite for HandleCustomRW")
+	}
+	if hasEffect(result.SideEffects, taxonomy.WriterOutput) {
+		t.Error("HandleCustomRW must not produce WriterOutput — HTTPResponseWrite takes precedence")
+	}
 }
 
 func TestP1_MapMutation(t *testing.T) {

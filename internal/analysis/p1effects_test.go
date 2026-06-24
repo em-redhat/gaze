@@ -127,6 +127,12 @@ func TestAnalyzeP1Effects_Direct_HTTPResponseWrite(t *testing.T) {
 	if !hasEffect(effects, taxonomy.HTTPResponseWrite) {
 		t.Error("expected HTTPResponseWrite effect for HandleHTTP")
 	}
+	// http.ResponseWriter embeds io.Writer, but the more specific
+	// HTTPResponseWrite classification must take precedence — no
+	// duplicate WriterOutput should be emitted (issue #131).
+	if hasEffect(effects, taxonomy.WriterOutput) {
+		t.Error("http.ResponseWriter.Write must not produce WriterOutput (HTTPResponseWrite takes precedence)")
+	}
 	for _, e := range effects {
 		if e.Type == taxonomy.HTTPResponseWrite {
 			if e.Tier != taxonomy.TierP1 {
@@ -365,6 +371,46 @@ func TestAnalyzeP1Effects_Direct_NamedReturnMapWrite(t *testing.T) {
 				t.Error("MapMutation description must not be empty")
 			}
 		}
+	}
+}
+
+// TestAnalyzeP1Effects_Direct_NonWriterWrite verifies that a type with
+// a Write method that does NOT match the io.Writer signature does NOT
+// produce WriterOutput. Notifier.Write(string) is not io.Writer.Write([]byte)(int, error).
+// Regression test for issue #109.
+func TestAnalyzeP1Effects_Direct_NonWriterWrite(t *testing.T) {
+	pkg := loadTestPackage(t, "p1effects")
+	fd := analysis.FindFuncDecl(pkg, "SendNote")
+	if fd == nil {
+		t.Fatal("SendNote not found in p1effects package")
+	}
+
+	effects := analysis.AnalyzeP1Effects(pkg.Fset, pkg.TypesInfo, fd, pkg.PkgPath, "SendNote")
+
+	if hasEffect(effects, taxonomy.WriterOutput) {
+		t.Error("SendNote must not produce WriterOutput — Notifier.Write(string) is not io.Writer")
+	}
+}
+
+// TestAnalyzeP1Effects_Direct_CustomResponseWriter verifies that a
+// custom struct implementing http.ResponseWriter produces
+// HTTPResponseWrite, not WriterOutput. Tests that isHTTPResponseWriter
+// correctly identifies custom implementations, not just the named type.
+// Regression test for issue #132.
+func TestAnalyzeP1Effects_Direct_CustomResponseWriter(t *testing.T) {
+	pkg := loadTestPackage(t, "p1effects")
+	fd := analysis.FindFuncDecl(pkg, "HandleCustomRW")
+	if fd == nil {
+		t.Fatal("HandleCustomRW not found in p1effects package")
+	}
+
+	effects := analysis.AnalyzeP1Effects(pkg.Fset, pkg.TypesInfo, fd, pkg.PkgPath, "HandleCustomRW")
+
+	if !hasEffect(effects, taxonomy.HTTPResponseWrite) {
+		t.Error("expected HTTPResponseWrite effect for HandleCustomRW")
+	}
+	if hasEffect(effects, taxonomy.WriterOutput) {
+		t.Error("HandleCustomRW must not produce WriterOutput — HTTPResponseWrite takes precedence")
 	}
 }
 

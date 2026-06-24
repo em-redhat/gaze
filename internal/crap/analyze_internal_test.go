@@ -1,24 +1,22 @@
 package crap
 
 import (
-	"fmt"
-	"go/token"
 	"math"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-
-	"github.com/fzipp/gocyclo"
 )
 
-// makeStat constructs a gocyclo.Stat for testing.
-func makeStat(pkg, fn, file string, line, complexity int) gocyclo.Stat {
-	return gocyclo.Stat{
-		PkgName:    pkg,
-		FuncName:   fn,
+// makeStat constructs a FunctionComplexity for testing.
+// Named makeStat for historical continuity — previously created
+// gocyclo.Stat values before the provider interface refactoring.
+func makeStat(pkg, fn, file string, line, complexity int) FunctionComplexity {
+	return FunctionComplexity{
+		Package:    pkg,
+		Function:   fn,
+		File:       file,
+		Line:       line,
 		Complexity: complexity,
-		Pos:        token.Position{Filename: file, Line: line},
 	}
 }
 
@@ -32,7 +30,7 @@ func makeCoverMap(entries map[coverKey]float64) coverMaps {
 }
 
 func TestComputeScores_BasicCRAP(t *testing.T) {
-	stats := []gocyclo.Stat{
+	stats := []FunctionComplexity{
 		makeStat("pkg", "Foo", "/src/foo.go", 10, 5),
 	}
 	cm := makeCoverMap(map[coverKey]float64{
@@ -65,7 +63,7 @@ func TestComputeScores_BasicCRAP(t *testing.T) {
 }
 
 func TestComputeScores_SkipsTestFiles(t *testing.T) {
-	stats := []gocyclo.Stat{
+	stats := []FunctionComplexity{
 		makeStat("pkg", "Foo", "/src/foo.go", 10, 5),
 		makeStat("pkg", "TestBar", "/src/foo_test.go", 20, 3),
 	}
@@ -98,7 +96,7 @@ func TestComputeScores_SkipsGeneratedFiles(t *testing.T) {
 		t.Fatalf("creating temp file: %v", err)
 	}
 
-	stats := []gocyclo.Stat{
+	stats := []FunctionComplexity{
 		makeStat("foo", "Gen", genFile, 3, 2),
 		makeStat("foo", "Normal", normalFile, 2, 3),
 	}
@@ -123,7 +121,7 @@ func TestComputeScores_SkipsGeneratedFiles(t *testing.T) {
 }
 
 func TestComputeScores_ZeroCoverage(t *testing.T) {
-	stats := []gocyclo.Stat{
+	stats := []FunctionComplexity{
 		makeStat("pkg", "Uncovered", "/src/foo.go", 10, 4),
 	}
 	// Empty coverage map — function has no coverage data.
@@ -146,7 +144,7 @@ func TestComputeScores_ZeroCoverage(t *testing.T) {
 }
 
 func TestComputeScores_GazeCRAP(t *testing.T) {
-	stats := []gocyclo.Stat{
+	stats := []FunctionComplexity{
 		makeStat("pkg", "Foo", "/src/foo.go", 10, 10),
 	}
 	cm := makeCoverMap(map[coverKey]float64{
@@ -185,7 +183,7 @@ func TestComputeScores_GazeCRAP(t *testing.T) {
 }
 
 func TestComputeScores_NoGazeCRAP(t *testing.T) {
-	stats := []gocyclo.Stat{
+	stats := []FunctionComplexity{
 		makeStat("pkg", "Foo", "/src/foo.go", 10, 5),
 	}
 	cm := makeCoverMap(map[coverKey]float64{
@@ -212,7 +210,7 @@ func TestComputeScores_NoGazeCRAP(t *testing.T) {
 }
 
 func TestComputeScores_GazeCRAPNotFound(t *testing.T) {
-	stats := []gocyclo.Stat{
+	stats := []FunctionComplexity{
 		makeStat("pkg", "Foo", "/src/foo.go", 10, 5),
 	}
 	cm := makeCoverMap(map[coverKey]float64{
@@ -312,7 +310,7 @@ func TestAssignFixStrategy_BelowThreshold(t *testing.T) {
 
 func TestComputeScores_FixStrategyAssigned(t *testing.T) {
 	// Verify computeScores assigns FixStrategy to above-threshold scores.
-	stats := []gocyclo.Stat{
+	stats := []FunctionComplexity{
 		makeStat("pkg", "HighComplexity", "/src/foo.go", 10, 20),
 		makeStat("pkg", "LowCRAP", "/src/foo.go", 20, 2),
 	}
@@ -368,7 +366,7 @@ func TestBuildSummary_FixStrategyCounts(t *testing.T) {
 }
 
 func TestComputeScores_CoverageReason_AllAmbiguous(t *testing.T) {
-	stats := []gocyclo.Stat{
+	stats := []FunctionComplexity{
 		makeStat("pkg", "Foo", "/src/foo.go", 10, 5),
 	}
 	cm := makeCoverMap(map[coverKey]float64{
@@ -405,7 +403,7 @@ func TestComputeScores_CoverageReason_AllAmbiguous(t *testing.T) {
 }
 
 func TestComputeScores_CoverageReason_Normal(t *testing.T) {
-	stats := []gocyclo.Stat{
+	stats := []FunctionComplexity{
 		makeStat("pkg", "Foo", "/src/foo.go", 10, 5),
 	}
 	cm := makeCoverMap(map[coverKey]float64{
@@ -497,112 +495,4 @@ func TestBuildSummary_RecommendedActions_Truncated(t *testing.T) {
 	}
 }
 
-// --- recoverPartialProfile Tests ---
 
-func TestRecoverPartialProfile_ExistsWithData(t *testing.T) {
-	// Task 1.3: go test exits non-zero but profile exists with data.
-	// Verify recoverPartialProfile returns the profile path and
-	// emits a warning to stderr.
-	tmpDir := t.TempDir()
-	profilePath := filepath.Join(tmpDir, "cover.out")
-	err := os.WriteFile(profilePath, []byte("mode: set\nsome/pkg/file.go:1.1,5.1 1 1\n"), 0644)
-	if err != nil {
-		t.Fatalf("writing test profile: %v", err)
-	}
-
-	var stderr strings.Builder
-	testErr := fmt.Errorf("exit status 1")
-
-	got, recoverErr := recoverPartialProfile(profilePath, testErr, &stderr)
-	if recoverErr != nil {
-		t.Fatalf("expected nil error, got: %v", recoverErr)
-	}
-	if got != profilePath {
-		t.Errorf("expected profile path %q, got %q", profilePath, got)
-	}
-
-	// Verify warning was emitted.
-	warning := stderr.String()
-	if !strings.Contains(warning, "warning:") {
-		t.Errorf("expected warning in stderr, got %q", warning)
-	}
-	if !strings.Contains(warning, "partial coverage used") {
-		t.Errorf("expected 'partial coverage used' in warning, got %q", warning)
-	}
-	if !strings.Contains(warning, "exit status 1") {
-		t.Errorf("expected test error in warning, got %q", warning)
-	}
-
-	// Verify profile was NOT deleted.
-	if _, statErr := os.Stat(profilePath); statErr != nil {
-		t.Errorf("profile should still exist after recovery, got: %v", statErr)
-	}
-}
-
-func TestRecoverPartialProfile_Missing(t *testing.T) {
-	// Task 1.4: go test exits non-zero and profile is missing.
-	// Verify hard error returned.
-	profilePath := filepath.Join(t.TempDir(), "nonexistent.out")
-	testErr := fmt.Errorf("exit status 1")
-
-	var stderr strings.Builder
-	_, recoverErr := recoverPartialProfile(profilePath, testErr, &stderr)
-	if recoverErr == nil {
-		t.Fatal("expected error for missing profile, got nil")
-	}
-
-	// Verify no warning was emitted (error path, not warning path).
-	if stderr.Len() != 0 {
-		t.Errorf("expected no stderr output for missing profile, got %q", stderr.String())
-	}
-}
-
-func TestRecoverPartialProfile_Empty(t *testing.T) {
-	// Task 1.5: go test exits non-zero and profile is empty (0 bytes).
-	// Verify hard error returned and file is cleaned up.
-	tmpDir := t.TempDir()
-	profilePath := filepath.Join(tmpDir, "empty.out")
-	err := os.WriteFile(profilePath, []byte{}, 0644)
-	if err != nil {
-		t.Fatalf("writing empty profile: %v", err)
-	}
-
-	var stderr strings.Builder
-	testErr := fmt.Errorf("exit status 2")
-
-	_, recoverErr := recoverPartialProfile(profilePath, testErr, &stderr)
-	if recoverErr == nil {
-		t.Fatal("expected error for empty profile, got nil")
-	}
-
-	// Verify file was cleaned up.
-	if _, statErr := os.Stat(profilePath); !os.IsNotExist(statErr) {
-		t.Errorf("expected empty profile to be removed, but it still exists")
-	}
-
-	// Verify no warning was emitted (error path, not warning path).
-	if stderr.Len() != 0 {
-		t.Errorf("expected no stderr output for empty profile, got %q", stderr.String())
-	}
-}
-
-func TestRecoverPartialProfile_NilStderr(t *testing.T) {
-	// Verify that nil stderr writer doesn't panic — warning is
-	// suppressed when no writer is provided.
-	tmpDir := t.TempDir()
-	profilePath := filepath.Join(tmpDir, "cover.out")
-	err := os.WriteFile(profilePath, []byte("mode: set\n"), 0644)
-	if err != nil {
-		t.Fatalf("writing test profile: %v", err)
-	}
-
-	testErr := fmt.Errorf("exit status 1")
-
-	got, recoverErr := recoverPartialProfile(profilePath, testErr, nil)
-	if recoverErr != nil {
-		t.Fatalf("expected nil error with nil stderr, got: %v", recoverErr)
-	}
-	if got != profilePath {
-		t.Errorf("expected profile path %q, got %q", profilePath, got)
-	}
-}

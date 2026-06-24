@@ -49,7 +49,7 @@ func TestResolvePackagePaths_EmptyPatterns(t *testing.T) {
 // TestLoadGazeConfigBestEffort_AlwaysNonNil verifies that the function always
 // returns a non-nil config, even in a directory with no .gaze.yaml.
 func TestLoadGazeConfigBestEffort_AlwaysNonNil(t *testing.T) {
-	cfg := loadGazeConfigBestEffort()
+	cfg := loadGazeConfigBestEffort(".")
 	if cfg == nil {
 		t.Error("expected non-nil GazeConfig from loadGazeConfigBestEffort")
 	}

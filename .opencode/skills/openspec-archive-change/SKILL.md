@@ -65,6 +65,28 @@ Archive a completed change in the experimental workflow.
 
    If user chooses sync, use Task tool (subagent_type: "general-purpose", prompt: "Use Skill tool to invoke openspec-sync-specs for change '<name>'. Delta spec analysis: <include the analyzed delta spec summary>"). Proceed to archive regardless of choice.
 
+4a. **Commit and push all changes**
+
+   Before archiving, ensure all work is committed:
+
+   1. Run `git status --short` to check for uncommitted
+      changes.
+   2. If uncommitted changes exist:
+      - Stage the change directory and implementation
+        files explicitly:
+        `git add openspec/changes/<name>/ .opencode/`
+        and any other modified files shown by
+        `git status --short`
+      - Commit with a descriptive message:
+        `git commit -m "feat(<name>): complete implementation"`
+      - Push to remote: `git push`
+   3. Verify the working tree is clean after push.
+
+   **CRITICAL**: Do NOT move to the archive step with
+   uncommitted changes. All work must be committed and
+   pushed before the change directory is moved to the
+   archive.
+
 5. **Perform the archive**
 
    Create the archive directory if it doesn't exist:

@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"golang.org/x/tools/cover"
+
+	"github.com/unbound-force/gaze/internal/loader"
 )
 
 // FuncCoverage holds the coverage percentage for a single function.
@@ -54,17 +56,28 @@ func ParseCoverProfile(profilePath string, moduleDir string, stderr io.Writer) (
 	}
 
 	if moduleDir == "" {
-		moduleDir, _ = os.Getwd()
+		cwd, _ := os.Getwd()
+		if cwd != "" {
+			if root, err := loader.FindModuleRoot(cwd); err == nil {
+				moduleDir = root
+			}
+		}
 	}
 
 	var results []FuncCoverage
+	var totalEntries, resolvedEntries int
 
 	for _, profile := range profiles {
+		totalEntries++
 		// Resolve the import path to a filesystem path.
 		filePath := resolveFilePath(profile.FileName, moduleDir)
 		if filePath == "" {
+			if stderr != nil {
+				_, _ = fmt.Fprintf(stderr, "warning: skipping profile entry %q: could not resolve to file on disk\n", profile.FileName)
+			}
 			continue
 		}
+		resolvedEntries++
 
 		// Find all functions in this source file.
 		funcs, err := findFunctions(filePath)
@@ -92,6 +105,10 @@ func ParseCoverProfile(profilePath string, moduleDir string, stderr io.Writer) (
 				Percentage:   pct,
 			})
 		}
+	}
+
+	if totalEntries > 0 && resolvedEntries == 0 {
+		return nil, fmt.Errorf("all %d coverage profile entries failed to resolve — check that the profile matches the current module", totalEntries)
 	}
 
 	return results, nil

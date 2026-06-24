@@ -135,8 +135,8 @@ func BuildAIMapperPrompt(ctx AIMapperContext) string {
 	b.WriteString(ctx.TargetFunc)
 	b.WriteString(" produces these side effects:\n")
 	for i, se := range ctx.SideEffects {
-		b.WriteString(fmt.Sprintf("  %d. [%s] %s (ID: %s)\n",
-			i+1, se.Type, se.Description, se.ID))
+		fmt.Fprintf(&b, "  %d. [%s] %s (ID: %s)\n",
+			i+1, se.Type, se.Description, se.ID)
 	}
 	b.WriteString("\n")
 
