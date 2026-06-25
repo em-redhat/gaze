@@ -1,10 +1,16 @@
 package adapter
 
 import (
+	"fmt"
 	"os/exec"
+	"regexp"
 
 	"github.com/unbound-force/gaze/internal/config"
 )
+
+// validLanguage matches language identifiers: lowercase letters,
+// digits, and hyphens only (e.g., "python", "type-script", "go").
+var validLanguage = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // Discover resolves the external analyzer binary and arguments using
 // a three-tier discovery mechanism (design decision D5):
@@ -19,10 +25,22 @@ import (
 //
 // The language parameter is required for tiers 2 and 3. If
 // analyzerFlag is non-empty, language is not needed (tier 1 wins).
+//
+// Trust model: the discovered binary is spawned as a subprocess with
+// access to the project directory. This is the same trust model as
+// tools specified in Makefile, .goreleaser.yaml, or go:generate
+// directives — the user explicitly configures which binary to run
+// via CLI flag or .gaze.yaml, and the binary runs with the user's
+// permissions. No sandboxing is applied.
 func Discover(analyzerFlag, language string, cfg *config.GazeConfig) (binary string, args []string, err error) {
 	// Tier 1: CLI flag overrides everything.
 	if analyzerFlag != "" {
 		return analyzerFlag, []string{"--stdio"}, nil
+	}
+
+	// Validate language before using it in binary name construction.
+	if language != "" && !validLanguage.MatchString(language) {
+		return "", nil, fmt.Errorf("invalid language identifier %q: must match [a-z0-9-]", language)
 	}
 
 	// Tier 2: Config-based lookup.

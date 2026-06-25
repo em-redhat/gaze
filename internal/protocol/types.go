@@ -12,7 +12,10 @@
 // request/response/error types.
 package protocol
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Protocol method constants for the 8 methods defined in Issue #95.
 const (
@@ -92,7 +95,7 @@ type Error struct {
 // Error implements the error interface for JSON-RPC errors.
 func (e *Error) Error() string {
 	if e.Data != nil {
-		return e.Message
+		return fmt.Sprintf("%s: %v", e.Message, e.Data)
 	}
 	return e.Message
 }

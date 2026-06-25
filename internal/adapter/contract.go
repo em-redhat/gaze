@@ -159,15 +159,47 @@ func buildContractLookup(
 	coverageByFunc := make(map[funcKey]crap.ContractCoverageInfo)
 	for key, effects := range effectsByFunc {
 		cc := quality.ComputeContractCoverage(effects, mappingsByFunc[key])
-		coverageByFunc[key] = crap.ContractCoverageInfo{
+		info := crap.ContractCoverageInfo{
 			Percentage: cc.Percentage,
 		}
+
+		// Populate diagnostic fields for output parity with Go-native path.
+		info.Reason, info.MinConfidence, info.MaxConfidence = deriveCoverageReason(effects, cc)
+		coverageByFunc[key] = info
 	}
 
 	return func(pkg, function string) (crap.ContractCoverageInfo, bool) {
 		info, ok := coverageByFunc[funcKey{pkg: pkg, function: function}]
 		return info, ok
 	}
+}
+
+// deriveCoverageReason determines the coverage reason and confidence
+// range from the computed contract coverage and raw effects. This
+// mirrors the diagnostic logic in the Go-native path
+// (internal/crap/contract.go) for output parity.
+func deriveCoverageReason(effects []taxonomy.SideEffect, cc taxonomy.ContractCoverage) (reason string, minConf, maxConf int) {
+	if len(effects) == 0 {
+		return "no_effects_detected", 0, 0
+	}
+
+	if cc.TotalContractual == 0 {
+		// All effects are ambiguous or incidental — none counted as contractual.
+		minConf, maxConf = 100, 0
+		for _, e := range effects {
+			if e.Classification != nil {
+				if e.Classification.Confidence < minConf {
+					minConf = e.Classification.Confidence
+				}
+				if e.Classification.Confidence > maxConf {
+					maxConf = e.Classification.Confidence
+				}
+			}
+		}
+		return "all_effects_ambiguous", minConf, maxConf
+	}
+
+	return "", 0, 0
 }
 
 // findSideEffectID finds the ID of the first side effect matching
