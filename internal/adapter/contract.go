@@ -182,24 +182,25 @@ func deriveCoverageReason(effects []taxonomy.SideEffect, cc taxonomy.ContractCov
 	if len(effects) == 0 {
 		return "no_effects_detected", 0, 0
 	}
-
 	if cc.TotalContractual == 0 {
-		// All effects are ambiguous or incidental — none counted as contractual.
-		minConf, maxConf = 100, 0
-		for _, e := range effects {
-			if e.Classification != nil {
-				if e.Classification.Confidence < minConf {
-					minConf = e.Classification.Confidence
-				}
-				if e.Classification.Confidence > maxConf {
-					maxConf = e.Classification.Confidence
-				}
-			}
-		}
-		return "all_effects_ambiguous", minConf, maxConf
+		min, max := confidenceRange(effects)
+		return "all_effects_ambiguous", min, max
 	}
-
 	return "", 0, 0
+}
+
+// confidenceRange returns the min and max classification confidence
+// across all effects that have a non-nil Classification.
+func confidenceRange(effects []taxonomy.SideEffect) (minConf, maxConf int) {
+	minConf, maxConf = 100, 0
+	for _, e := range effects {
+		if e.Classification == nil {
+			continue
+		}
+		minConf = min(minConf, e.Classification.Confidence)
+		maxConf = max(maxConf, e.Classification.Confidence)
+	}
+	return minConf, maxConf
 }
 
 // findSideEffectID finds the ID of the first side effect matching

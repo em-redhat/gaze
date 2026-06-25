@@ -127,7 +127,7 @@ func TestQualityWithExternalAnalyzer_Rejected(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	err := runQuality(qualityParams{
-		pkgPath:      "./...",
+		patterns:     []string{"./..."},
 		format:       "text",
 		analyzerFlag: "some-analyzer",
 		stdout:       &stdout,
