@@ -1448,6 +1448,9 @@ Packages without test files are skipped with a warning.`,
 		"external analyzer binary (e.g., snake-eyes)")
 	cmd.Flags().StringVar(&languageFlag, "language", "",
 		"target language for analyzer discovery (e.g., python)")
+	// Hide analyzer flags on quality until supported (D12 deferral).
+	_ = cmd.Flags().MarkHidden("analyzer")
+	_ = cmd.Flags().MarkHidden("language")
 
 	return cmd
 }

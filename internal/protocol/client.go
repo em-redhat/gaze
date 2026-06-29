@@ -219,13 +219,11 @@ func (c *Client) Close() error {
 		return nil // already closed
 	}
 
-	// Send shutdown request with a short timeout. Best-effort —
-	// if the analyzer is already dead, the write will fail and
-	// we proceed to cleanup.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
-
-	_, _ = c.Call(shutdownCtx, MethodShutdown, nil)
+	// Send shutdown request directly, bypassing the closed check
+	// in Call(). This is necessary because we just set closed=true
+	// above to prevent concurrent callers, but we still need to
+	// send the final shutdown message.
+	c.sendShutdown()
 
 	// Close stdin to signal EOF to the subprocess.
 	_ = c.stdin.Close()
@@ -234,6 +232,32 @@ func (c *Client) Close() error {
 	err := c.cmd.Wait()
 
 	return err
+}
+
+// sendShutdown sends the shutdown JSON-RPC request directly to the
+// subprocess stdin, bypassing Call()'s closed-state guard. This is
+// the only method allowed to write after closed=true — it exists
+// so Close() can send the final shutdown message before closing stdin.
+//
+// Best-effort: if the analyzer is already dead or the pipe is broken,
+// the write fails silently and Close() proceeds to cleanup.
+func (c *Client) sendShutdown() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	id := c.nextID.Add(1)
+	req := Request{
+		JSONRPC: jsonRPCVersion,
+		ID:      id,
+		Method:  MethodShutdown,
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		return // best-effort
+	}
+	data = append(data, '\n')
+	_, _ = c.stdin.Write(data)
+	// Don't wait for response — analyzer may exit immediately.
 }
 
 // Stderr returns the accumulated stderr output from the analyzer
