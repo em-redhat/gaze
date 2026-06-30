@@ -316,6 +316,40 @@ func TestLoad_NegativeContractual(t *testing.T) {
 	}
 }
 
+// --- Issue #164: GazeCRAP new-function threshold tests ---
+
+func TestSC004_ConfigDefault_GazeCRAPThreshold(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.Baseline.NewFunctionGazeCRAPThreshold != 30 {
+		t.Errorf("default NewFunctionGazeCRAPThreshold = %g, want 30",
+			cfg.Baseline.NewFunctionGazeCRAPThreshold)
+	}
+}
+
+func TestSC007_ConfigValidation_ZeroGazeCRAPThreshold(t *testing.T) {
+	_, err := Load(filepath.Join("testdata", "invalid-baseline-gaze-threshold-zero.yaml"))
+	if err == nil {
+		t.Fatal("expected error for zero gaze_crap threshold, got nil")
+	}
+
+	want := "baseline.new_function_gaze_crap_threshold must be > 0"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want to contain %q", err, want)
+	}
+}
+
+func TestSC007_ConfigValidation_NegativeGazeCRAPThreshold(t *testing.T) {
+	_, err := Load(filepath.Join("testdata", "invalid-baseline-gaze-threshold-negative.yaml"))
+	if err == nil {
+		t.Fatal("expected error for negative gaze_crap threshold, got nil")
+	}
+
+	want := "baseline.new_function_gaze_crap_threshold must be > 0"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want to contain %q", err, want)
+	}
+}
+
 func TestLoad_ZeroIncidental(t *testing.T) {
 	_, err := Load(filepath.Join("testdata", "zero-incidental.yaml"))
 	if err == nil {

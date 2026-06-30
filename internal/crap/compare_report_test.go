@@ -677,3 +677,189 @@ func TestDeltaTable_TwoRowFormat_WidthCompliance(t *testing.T) {
 		}
 	}
 }
+
+// --- Issue #164: GazeCRAP new-function threshold report tests ---
+
+func TestSC006_TextReport_ViolationShowsGazeCRAP(t *testing.T) {
+	// A new-function violation with GazeCRAP available should
+	// display both CRAP and GazeCRAP scores in the text output.
+	result := &ComparisonResult{
+		Report: &Report{
+			Scores: []Score{
+				makeScore("a.go", "Existing", 5.0, nil),
+				makeScore("b.go", "NewFunc", 25.0, float64Ptr(40.0)),
+			},
+			Summary: Summary{
+				TotalFunctions: 2,
+				CRAPThreshold:  15,
+			},
+		},
+		NewFunctions: []Score{
+			makeScore("b.go", "NewFunc", 25.0, float64Ptr(40.0)),
+		},
+		Summary: ComparisonSummary{
+			NewViolations:                1,
+			Passed:                       false,
+			Epsilon:                      0.5,
+			NewFunctionThreshold:         30,
+			NewFunctionGazeCRAPThreshold: 30,
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteComparisonText(&buf, result); err != nil {
+		t.Fatalf("WriteComparisonText() error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "CRAP: 25.0") {
+		t.Error("violation output missing CRAP score")
+	}
+	if !strings.Contains(output, "GazeCRAP: 40.0") {
+		t.Error("violation output missing GazeCRAP score")
+	}
+	if !strings.Contains(output, "VIOLATION") {
+		t.Error("violation output missing [VIOLATION] marker")
+	}
+}
+
+func TestSC006_TextReport_ViolationWithoutGazeCRAP(t *testing.T) {
+	// A violation with nil GazeCRAP should show only CRAP, no
+	// GazeCRAP label.
+	result := &ComparisonResult{
+		Report: &Report{
+			Scores: []Score{
+				makeScore("a.go", "Existing", 5.0, nil),
+				makeScore("b.go", "NewFunc", 42.0, nil),
+			},
+			Summary: Summary{
+				TotalFunctions: 2,
+				CRAPThreshold:  15,
+			},
+		},
+		NewFunctions: []Score{
+			makeScore("b.go", "NewFunc", 42.0, nil),
+		},
+		Summary: ComparisonSummary{
+			NewViolations:                1,
+			Passed:                       false,
+			Epsilon:                      0.5,
+			NewFunctionThreshold:         30,
+			NewFunctionGazeCRAPThreshold: 30,
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteComparisonText(&buf, result); err != nil {
+		t.Fatalf("WriteComparisonText() error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "CRAP: 42.0") {
+		t.Error("violation output missing CRAP score")
+	}
+	if strings.Contains(output, "GazeCRAP:") {
+		t.Error("violation output should NOT contain GazeCRAP when GazeCRAP is nil")
+	}
+	if !strings.Contains(output, "VIOLATION") {
+		t.Error("violation output missing [VIOLATION] marker")
+	}
+}
+
+func TestSC005_JSONOutput_SummaryIncludesGazeCRAPThreshold(t *testing.T) {
+	// The comparison JSON output must include the
+	// new_function_gaze_crap_threshold field.
+	result := &ComparisonResult{
+		Report: &Report{
+			Scores:  []Score{makeScore("a.go", "Func", 5.0, nil)},
+			Summary: Summary{TotalFunctions: 1, CRAPThreshold: 15},
+		},
+		Deltas: []FunctionDelta{
+			{
+				Baseline:  makeScore("a.go", "Func", 5.0, nil),
+				Current:   makeScore("a.go", "Func", 5.0, nil),
+				CRAPDelta: 0,
+				Status:    StatusUnchanged,
+			},
+		},
+		Summary: ComparisonSummary{
+			Unchanged:                    1,
+			Passed:                       true,
+			Epsilon:                      0.5,
+			NewFunctionThreshold:         30,
+			NewFunctionGazeCRAPThreshold: 40,
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteComparisonJSON(&buf, result); err != nil {
+		t.Fatalf("WriteComparisonJSON() error: %v", err)
+	}
+
+	var output map[string]json.RawMessage
+	if err := json.Unmarshal(buf.Bytes(), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+
+	var comparison ComparisonSummary
+	if err := json.Unmarshal(output["comparison"], &comparison); err != nil {
+		t.Fatalf("parsing comparison: %v", err)
+	}
+
+	if comparison.NewFunctionGazeCRAPThreshold != 40 {
+		t.Errorf("comparison.new_function_gaze_crap_threshold = %g, want 40",
+			comparison.NewFunctionGazeCRAPThreshold)
+	}
+}
+
+func TestSC005_JSONOutput_NewFunctionStatusUsesGazeCRAP(t *testing.T) {
+	// A new function with CRAP below threshold but GazeCRAP above
+	// threshold should have status "new_violation" in JSON output.
+	result := &ComparisonResult{
+		Report: &Report{
+			Scores: []Score{
+				makeScore("a.go", "Existing", 5.0, nil),
+				makeScore("b.go", "NewFunc", 25.0, float64Ptr(40.0)),
+			},
+			Summary: Summary{TotalFunctions: 2, CRAPThreshold: 15},
+		},
+		NewFunctions: []Score{
+			makeScore("b.go", "NewFunc", 25.0, float64Ptr(40.0)),
+		},
+		Summary: ComparisonSummary{
+			NewViolations:                1,
+			Passed:                       false,
+			Epsilon:                      0.5,
+			NewFunctionThreshold:         30,
+			NewFunctionGazeCRAPThreshold: 30,
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteComparisonJSON(&buf, result); err != nil {
+		t.Fatalf("WriteComparisonJSON() error: %v", err)
+	}
+
+	var output map[string]json.RawMessage
+	if err := json.Unmarshal(buf.Bytes(), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+
+	var newFuncs []map[string]interface{}
+	if err := json.Unmarshal(output["new_functions"], &newFuncs); err != nil {
+		t.Fatalf("parsing new_functions: %v", err)
+	}
+
+	if len(newFuncs) != 1 {
+		t.Fatalf("len(new_functions) = %d, want 1", len(newFuncs))
+	}
+
+	status, ok := newFuncs[0]["status"].(string)
+	if !ok {
+		t.Fatal("new_functions[0].status is not a string")
+	}
+	if status != string(StatusNewViolation) {
+		t.Errorf("new_functions[0].status = %q, want %q",
+			status, StatusNewViolation)
+	}
+}

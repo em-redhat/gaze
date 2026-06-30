@@ -1096,3 +1096,205 @@ func TestSC006_ComparisonPasses(t *testing.T) {
 		t.Error("text output missing New Functions section")
 	}
 }
+
+// --- Issue #164: GazeCRAP new-function threshold tests ---
+
+// defaultNewFuncOpts returns CompareOptions with default thresholds
+// (30 for both CRAP and GazeCRAP) used by the new-function tests.
+func defaultNewFuncOpts() CompareOptions {
+	return CompareOptions{
+		Epsilon:                      0.5,
+		NewFunctionThreshold:         30,
+		NewFunctionGazeCRAPThreshold: 30,
+	}
+}
+
+func TestSC001_NewFunction_GazeCRAPAboveThreshold(t *testing.T) {
+	// New function with CRAP below threshold but GazeCRAP above
+	// threshold should be classified as new_violation.
+	baseline := &Report{Scores: []Score{
+		makeScore("a.go", "Existing", 5.0, nil),
+	}}
+	current := &Report{Scores: []Score{
+		makeScore("a.go", "Existing", 5.0, nil),
+		makeScore("b.go", "NewFunc", 25.0, float64Ptr(40.0)),
+	}}
+
+	result := Compare(baseline, current, defaultNewFuncOpts())
+
+	if result.Summary.NewViolations != 1 {
+		t.Errorf("NewViolations = %d, want 1 (GazeCRAP 40 > threshold 30)",
+			result.Summary.NewViolations)
+	}
+	if result.Summary.Passed {
+		t.Error("Summary.Passed = true, want false (GazeCRAP violation)")
+	}
+}
+
+func TestSC001_NewFunction_BothAboveThreshold(t *testing.T) {
+	// New function with both CRAP and GazeCRAP above threshold.
+	baseline := &Report{Scores: []Score{
+		makeScore("a.go", "Existing", 5.0, nil),
+	}}
+	current := &Report{Scores: []Score{
+		makeScore("a.go", "Existing", 5.0, nil),
+		makeScore("b.go", "NewFunc", 42.0, float64Ptr(55.0)),
+	}}
+
+	result := Compare(baseline, current, defaultNewFuncOpts())
+
+	if result.Summary.NewViolations != 1 {
+		t.Errorf("NewViolations = %d, want 1 (both above threshold)",
+			result.Summary.NewViolations)
+	}
+	if result.Summary.Passed {
+		t.Error("Summary.Passed = true, want false")
+	}
+}
+
+func TestSC001_NewFunction_BothBelowThreshold(t *testing.T) {
+	// New function with both CRAP and GazeCRAP below threshold.
+	baseline := &Report{Scores: []Score{
+		makeScore("a.go", "Existing", 5.0, nil),
+	}}
+	current := &Report{Scores: []Score{
+		makeScore("a.go", "Existing", 5.0, nil),
+		makeScore("b.go", "NewFunc", 5.0, float64Ptr(8.0)),
+	}}
+
+	result := Compare(baseline, current, defaultNewFuncOpts())
+
+	if result.Summary.NewViolations != 0 {
+		t.Errorf("NewViolations = %d, want 0 (both below threshold)",
+			result.Summary.NewViolations)
+	}
+	if result.Summary.NewFunctions != 1 {
+		t.Errorf("NewFunctions = %d, want 1",
+			result.Summary.NewFunctions)
+	}
+	if !result.Summary.Passed {
+		t.Error("Summary.Passed = false, want true")
+	}
+}
+
+func TestSC001_NewFunction_GazeCRAPEqualToThreshold(t *testing.T) {
+	// GazeCRAP exactly at threshold (30) is NOT a violation
+	// (strict greater-than comparison).
+	baseline := &Report{Scores: []Score{
+		makeScore("a.go", "Existing", 5.0, nil),
+	}}
+	current := &Report{Scores: []Score{
+		makeScore("a.go", "Existing", 5.0, nil),
+		makeScore("b.go", "NewFunc", 25.0, float64Ptr(30.0)),
+	}}
+
+	result := Compare(baseline, current, defaultNewFuncOpts())
+
+	if result.Summary.NewViolations != 0 {
+		t.Errorf("NewViolations = %d, want 0 (GazeCRAP == threshold, not >)",
+			result.Summary.NewViolations)
+	}
+	if !result.Summary.Passed {
+		t.Error("Summary.Passed = false, want true (equal to threshold is not a violation)")
+	}
+}
+
+func TestSC004_IndependentThresholds(t *testing.T) {
+	// Independent thresholds: CRAP 30, GazeCRAP 40.
+	// New function with CRAP 25, GazeCRAP 38 — both below
+	// their respective thresholds.
+	baseline := &Report{Scores: []Score{
+		makeScore("a.go", "Existing", 5.0, nil),
+	}}
+	current := &Report{Scores: []Score{
+		makeScore("a.go", "Existing", 5.0, nil),
+		makeScore("b.go", "NewFunc", 25.0, float64Ptr(38.0)),
+	}}
+
+	opts := CompareOptions{
+		Epsilon:                      0.5,
+		NewFunctionThreshold:         30,
+		NewFunctionGazeCRAPThreshold: 40,
+	}
+	result := Compare(baseline, current, opts)
+
+	if result.Summary.NewViolations != 0 {
+		t.Errorf("NewViolations = %d, want 0 (GazeCRAP 38 < threshold 40)",
+			result.Summary.NewViolations)
+	}
+	if !result.Summary.Passed {
+		t.Error("Summary.Passed = false, want true")
+	}
+}
+
+func TestSC004_IndependentThresholds_GazeCRAPExceeds(t *testing.T) {
+	// Independent thresholds: CRAP 30, GazeCRAP 40.
+	// New function with CRAP 25, GazeCRAP 42 — CRAP below its
+	// threshold but GazeCRAP above its threshold.
+	baseline := &Report{Scores: []Score{
+		makeScore("a.go", "Existing", 5.0, nil),
+	}}
+	current := &Report{Scores: []Score{
+		makeScore("a.go", "Existing", 5.0, nil),
+		makeScore("b.go", "NewFunc", 25.0, float64Ptr(42.0)),
+	}}
+
+	opts := CompareOptions{
+		Epsilon:                      0.5,
+		NewFunctionThreshold:         30,
+		NewFunctionGazeCRAPThreshold: 40,
+	}
+	result := Compare(baseline, current, opts)
+
+	if result.Summary.NewViolations != 1 {
+		t.Errorf("NewViolations = %d, want 1 (GazeCRAP 42 > threshold 40)",
+			result.Summary.NewViolations)
+	}
+	if result.Summary.Passed {
+		t.Error("Summary.Passed = true, want false (GazeCRAP violation)")
+	}
+}
+
+func TestSC003_NilGazeCRAP_CRAPBelowThreshold(t *testing.T) {
+	// When GazeCRAP is nil, only CRAP is evaluated.
+	// CRAP 25 < threshold 30 → not a violation.
+	baseline := &Report{Scores: []Score{
+		makeScore("a.go", "Existing", 5.0, nil),
+	}}
+	current := &Report{Scores: []Score{
+		makeScore("a.go", "Existing", 5.0, nil),
+		makeScore("b.go", "NewFunc", 25.0, nil),
+	}}
+
+	result := Compare(baseline, current, defaultNewFuncOpts())
+
+	if result.Summary.NewViolations != 0 {
+		t.Errorf("NewViolations = %d, want 0 (nil GazeCRAP, CRAP below threshold)",
+			result.Summary.NewViolations)
+	}
+	if !result.Summary.Passed {
+		t.Error("Summary.Passed = false, want true")
+	}
+}
+
+func TestSC003_NilGazeCRAP_CRAPAboveThreshold(t *testing.T) {
+	// When GazeCRAP is nil, only CRAP is evaluated.
+	// CRAP 35 > threshold 30 → violation.
+	baseline := &Report{Scores: []Score{
+		makeScore("a.go", "Existing", 5.0, nil),
+	}}
+	current := &Report{Scores: []Score{
+		makeScore("a.go", "Existing", 5.0, nil),
+		makeScore("b.go", "NewFunc", 35.0, nil),
+	}}
+
+	result := Compare(baseline, current, defaultNewFuncOpts())
+
+	if result.Summary.NewViolations != 1 {
+		t.Errorf("NewViolations = %d, want 1 (CRAP 35 > threshold 30)",
+			result.Summary.NewViolations)
+	}
+	if result.Summary.Passed {
+		t.Error("Summary.Passed = true, want false")
+	}
+}

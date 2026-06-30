@@ -18,6 +18,13 @@ type CompareOptions struct {
 	// violation. Functions at or below this threshold are
 	// informational "new" entries.
 	NewFunctionThreshold float64
+
+	// NewFunctionGazeCRAPThreshold is the GazeCRAP score above
+	// which a new function is classified as a violation. When
+	// GazeCRAP is available for a new function, it is evaluated
+	// independently from the CRAP threshold — either metric
+	// exceeding its threshold triggers a violation.
+	NewFunctionGazeCRAPThreshold float64
 }
 
 // LoadBaseline deserializes a crap.Report from JSON read from r.
@@ -158,9 +165,10 @@ func classifyDelta(crapDelta float64, gazeCRAPDelta *float64, hasGazeDelta bool,
 // comparison result and determines pass/fail.
 func buildComparisonSummary(result *ComparisonResult, opts CompareOptions) ComparisonSummary {
 	summary := ComparisonSummary{
-		Epsilon:              opts.Epsilon,
-		NewFunctionThreshold: opts.NewFunctionThreshold,
-		RemovedFunctions:     len(result.RemovedFunctions),
+		Epsilon:                      opts.Epsilon,
+		NewFunctionThreshold:         opts.NewFunctionThreshold,
+		NewFunctionGazeCRAPThreshold: opts.NewFunctionGazeCRAPThreshold,
+		RemovedFunctions:             len(result.RemovedFunctions),
 	}
 
 	for _, d := range result.Deltas {
@@ -175,7 +183,9 @@ func buildComparisonSummary(result *ComparisonResult, opts CompareOptions) Compa
 	}
 
 	for _, s := range result.NewFunctions {
-		if s.CRAP > opts.NewFunctionThreshold {
+		crapViolation := s.CRAP > opts.NewFunctionThreshold
+		gazeViolation := s.GazeCRAP != nil && *s.GazeCRAP > opts.NewFunctionGazeCRAPThreshold
+		if crapViolation || gazeViolation {
 			summary.NewViolations++
 		} else {
 			summary.NewFunctions++

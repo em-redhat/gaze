@@ -97,13 +97,7 @@ func mapAssertionsToEffectsImpl(
 	objToEffectID := traceTargetValues(targetCall, effects, testPkg, testFunc, targetFunc)
 
 	// Build return-value effect ID for inline call matching.
-	var returnEffectID string
-	for _, e := range effects {
-		if e.Type == taxonomy.ReturnValue {
-			returnEffectID = e.ID
-			break
-		}
-	}
+	returnEffectID := findReturnEffectID(effects)
 
 	// Match assertion expressions to traced values.
 	for _, site := range sites {
@@ -139,6 +133,17 @@ func mapAssertionsToEffectsImpl(
 	}
 
 	return mapped, unmapped, discardedIDs
+}
+
+// findReturnEffectID returns the ID of the first ReturnValue effect,
+// or "" if none exists.
+func findReturnEffectID(effects []taxonomy.SideEffect) string {
+	for _, e := range effects {
+		if e.Type == taxonomy.ReturnValue {
+			return e.ID
+		}
+	}
+	return ""
 }
 
 // detectDiscardedReturns identifies return/error side effects whose

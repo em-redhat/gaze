@@ -181,6 +181,44 @@ baseline:
 
 For full configuration details, see [Configuration Reference](docs/reference/configuration.md).
 
+## Multi-Language Support
+
+Gaze can analyze non-Go projects by delegating to external analyzer binaries that implement the [Gaze Analyzer Protocol](docs/protocol.md). The protocol uses JSON-RPC 2.0 over stdin/stdout -- the same transport model as LSP.
+
+### Using an External Analyzer
+
+```bash
+gaze crap --analyzer snake-eyes ./src              # Explicit binary
+gaze crap --analyzer snake-eyes --language python ./src
+gaze report --analyzer snake-eyes --format=json ./src
+```
+
+### Analyzer Discovery
+
+Gaze finds analyzers using a three-tier discovery mechanism:
+
+1. **CLI flag**: `--analyzer <binary>` overrides everything
+2. **Config file**: `.gaze.yaml` `analyzers.<language>.command`
+3. **PATH convention**: `gaze-analyzer-<language>` on PATH
+
+### Analyzer Configuration
+
+Configure analyzers in `.gaze.yaml`:
+
+```yaml
+analyzers:
+  python:
+    command: snake-eyes
+    args: ["--stdio"]
+  rust:
+    command: /usr/local/bin/gaze-analyzer-rust
+    args: ["--stdio", "--edition=2021"]
+```
+
+When no `--analyzer` flag is set and no analyzer is configured, Gaze uses its built-in Go analysis -- no configuration needed for Go-only usage.
+
+For the full protocol specification (message format, methods, capability negotiation), see [Protocol Reference](docs/protocol.md).
+
 ## Output Formats
 
 The `analyze`, `crap`, `quality`, and `self-check` commands support `--format=text` (default) and `--format=json`.
@@ -205,8 +243,6 @@ For setup details, see the [OpenCode Integration guide](docs/guides/opencode-int
 - **P3-P4 side effects not yet detected.** The taxonomy defines types for stdout/stderr writes, environment mutations, mutex operations, reflection, unsafe, and other P3-P4 effects, but detection logic is not yet implemented for these tiers.
 - **GazeCRAP accuracy is limited.** The quality pipeline is wired into the CRAP command and GazeCRAP scores are computed when contract coverage data is available. However, assertion-to-side-effect mapping accuracy is currently ~86% (target: 90%), primarily affecting cross-target assertions and go-cmp patterns (tracked as GitHub Issue #6).
 - **No CGo or unsafe analysis.** Functions using `cgo` or `unsafe.Pointer` are not analyzed for their specific side effects.
-- **Single package loading.** The `analyze` command processes one package at a time. Use shell loops or scripting for multi-package analysis.
-
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE) for details.

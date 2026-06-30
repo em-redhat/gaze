@@ -19,3 +19,10 @@ Divisor agent from .opencode/agents/:
 - divisor-adversary.md — security, error handling
 - divisor-testing.md — test quality, assertions
 - divisor-sre.md — operations, performance
+
+## Active Technologies
+- Go 1.25+ (per `go.mod` directive) + Standard library only (no new dependencies). Existing: `gopkg.in/yaml.v3` (config), `encoding/json` (report output) (039-baseline-gazecrap-threshold)
+- N/A — no persistence changes (039-baseline-gazecrap-threshold)
+
+## Recent Changes
+- 039-baseline-gazecrap-threshold: Added Go 1.25+ (per `go.mod` directive) + Standard library only (no new dependencies). Existing: `gopkg.in/yaml.v3` (config), `encoding/json` (report output)

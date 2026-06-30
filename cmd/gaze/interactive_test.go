@@ -2,6 +2,8 @@ package main
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,12 +12,34 @@ import (
 	"github.com/unbound-force/gaze/internal/taxonomy"
 )
 
+// fakeBinaryPath is the path to the compiled fake_analyzer binary.
+// Built once in TestMain from the protocol testdata.
+var fakeBinaryPath string
+
 // TestMain forces lipgloss to use ASCII (no-color) rendering so that
 // string content assertions in renderAnalyzeContent tests are
 // deterministic across terminal environments and CI configurations.
+// It also builds the fake_analyzer binary for external analyzer tests.
 func TestMain(m *testing.M) {
 	lipgloss.DefaultRenderer().SetColorProfile(termenv.Ascii)
-	os.Exit(m.Run())
+
+	// Build the fake analyzer binary for external analyzer integration
+	// tests (TestCrapWithExternalAnalyzer, etc.).
+	tmpDir, err := os.MkdirTemp("", "gaze-cli-test-*")
+	if err != nil {
+		panic("creating temp dir: " + err.Error())
+	}
+	fakeBinaryPath = filepath.Join(tmpDir, "fake_analyzer")
+	cmd := exec.Command("go", "build", "-o", fakeBinaryPath,
+		"../../internal/protocol/testdata/fake_analyzer/")
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		panic("building fake_analyzer: " + err.Error())
+	}
+
+	code := m.Run()
+	_ = os.RemoveAll(tmpDir)
+	os.Exit(code)
 }
 
 // TestRenderAnalyzeContent_EmptyResults verifies that an empty slice

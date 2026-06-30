@@ -201,15 +201,16 @@ type FunctionDelta struct {
 
 // ComparisonSummary holds aggregate counts for a baseline comparison.
 type ComparisonSummary struct {
-	Regressions          int     `json:"regressions"`
-	Improvements         int     `json:"improvements"`
-	NewFunctions         int     `json:"new_functions"`
-	NewViolations        int     `json:"new_violations"`
-	RemovedFunctions     int     `json:"removed_functions"`
-	Unchanged            int     `json:"unchanged"`
-	Epsilon              float64 `json:"epsilon"`
-	NewFunctionThreshold float64 `json:"new_function_threshold"`
-	Passed               bool    `json:"passed"`
+	Regressions                  int     `json:"regressions"`
+	Improvements                 int     `json:"improvements"`
+	NewFunctions                 int     `json:"new_functions"`
+	NewViolations                int     `json:"new_violations"`
+	RemovedFunctions             int     `json:"removed_functions"`
+	Unchanged                    int     `json:"unchanged"`
+	Epsilon                      float64 `json:"epsilon"`
+	NewFunctionThreshold         float64 `json:"new_function_threshold"`
+	NewFunctionGazeCRAPThreshold float64 `json:"new_function_gaze_crap_threshold"`
+	Passed                       bool    `json:"passed"`
 }
 
 // ComparisonResult is the envelope for a baseline-vs-current

@@ -116,7 +116,10 @@ func WriteComparisonJSON(w io.Writer, result *ComparisonResult) error {
 	newFuncs := make([]newFunctionJSON, 0, len(result.NewFunctions))
 	for _, nf := range result.NewFunctions {
 		status := StatusNew
-		if nf.CRAP > result.Summary.NewFunctionThreshold {
+		crapViolation := nf.CRAP > result.Summary.NewFunctionThreshold
+		gazeViolation := nf.GazeCRAP != nil &&
+			*nf.GazeCRAP > result.Summary.NewFunctionGazeCRAPThreshold
+		if crapViolation || gazeViolation {
 			status = StatusNewViolation
 		}
 		newFuncs = append(newFuncs, newFunctionJSON{
@@ -183,7 +186,9 @@ func WriteComparisonText(w io.Writer, result *ComparisonResult) error {
 	writeComparisonDeltaTable(w, "Improvements", result.Deltas, StatusImprovement)
 
 	// New functions with violations.
-	writeComparisonNewFunctions(w, result.NewFunctions, result.Summary.NewFunctionThreshold)
+	writeComparisonNewFunctions(w, result.NewFunctions,
+		result.Summary.NewFunctionThreshold,
+		result.Summary.NewFunctionGazeCRAPThreshold)
 
 	// Removed functions.
 	writeComparisonRemovedFunctions(w, result.RemovedFunctions)
@@ -256,9 +261,9 @@ func writeComparisonDeltaTable(w io.Writer, title string, deltas []FunctionDelta
 }
 
 // writeComparisonNewFunctions writes the new functions section.
-// Functions above the threshold are marked as violations.
+// Functions above either threshold are marked as violations.
 // Omitted if there are no new functions.
-func writeComparisonNewFunctions(w io.Writer, newFuncs []Score, threshold float64) {
+func writeComparisonNewFunctions(w io.Writer, newFuncs []Score, crapThreshold, gazeCRAPThreshold float64) {
 	if len(newFuncs) == 0 {
 		return
 	}
@@ -266,7 +271,9 @@ func writeComparisonNewFunctions(w io.Writer, newFuncs []Score, threshold float6
 	// Separate violations from informational new functions.
 	var violations, informational []Score
 	for _, s := range newFuncs {
-		if s.CRAP > threshold {
+		crapViolation := s.CRAP > crapThreshold
+		gazeViolation := s.GazeCRAP != nil && *s.GazeCRAP > gazeCRAPThreshold
+		if crapViolation || gazeViolation {
 			violations = append(violations, s)
 		} else {
 			informational = append(informational, s)
@@ -276,9 +283,14 @@ func writeComparisonNewFunctions(w io.Writer, newFuncs []Score, threshold float6
 	if len(violations) > 0 {
 		_, _ = fmt.Fprintf(w, "\nNew Functions (violations):\n")
 		for _, s := range violations {
-			_, _ = fmt.Fprintf(w, "  %-40s  CRAP: %.1f  [VIOLATION]\n",
-				fmt.Sprintf("%s (%s)", s.Function, shortenPath(s.File)),
-				s.CRAP)
+			label := fmt.Sprintf("%s (%s)", s.Function, shortenPath(s.File))
+			if s.GazeCRAP != nil {
+				_, _ = fmt.Fprintf(w, "  %-40s  CRAP: %.1f  GazeCRAP: %.1f  [VIOLATION]\n",
+					label, s.CRAP, *s.GazeCRAP)
+			} else {
+				_, _ = fmt.Fprintf(w, "  %-40s  CRAP: %.1f  [VIOLATION]\n",
+					label, s.CRAP)
+			}
 		}
 	}
 
