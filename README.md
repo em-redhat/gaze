@@ -181,6 +181,44 @@ baseline:
 
 For full configuration details, see [Configuration Reference](docs/reference/configuration.md).
 
+## Multi-Language Support
+
+Gaze can analyze non-Go projects by delegating to external analyzer binaries that implement the [Gaze Analyzer Protocol](docs/protocol.md). The protocol uses JSON-RPC 2.0 over stdin/stdout -- the same transport model as LSP.
+
+### Using an External Analyzer
+
+```bash
+gaze crap --analyzer snake-eyes ./src              # Explicit binary
+gaze crap --analyzer snake-eyes --language python ./src
+gaze report --analyzer snake-eyes --format=json ./src
+```
+
+### Analyzer Discovery
+
+Gaze finds analyzers using a three-tier discovery mechanism:
+
+1. **CLI flag**: `--analyzer <binary>` overrides everything
+2. **Config file**: `.gaze.yaml` `analyzers.<language>.command`
+3. **PATH convention**: `gaze-analyzer-<language>` on PATH
+
+### Analyzer Configuration
+
+Configure analyzers in `.gaze.yaml`:
+
+```yaml
+analyzers:
+  python:
+    command: snake-eyes
+    args: ["--stdio"]
+  rust:
+    command: /usr/local/bin/gaze-analyzer-rust
+    args: ["--stdio", "--edition=2021"]
+```
+
+When no `--analyzer` flag is set and no analyzer is configured, Gaze uses its built-in Go analysis -- no configuration needed for Go-only usage.
+
+For the full protocol specification (message format, methods, capability negotiation), see [Protocol Reference](docs/protocol.md).
+
 ## Output Formats
 
 The `analyze`, `crap`, `quality`, and `self-check` commands support `--format=text` (default) and `--format=json`.

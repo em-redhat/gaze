@@ -73,6 +73,26 @@ type BaselineConfig struct {
 	NewFunctionGazeCRAPThreshold float64 `yaml:"new_function_gaze_crap_threshold"`
 }
 
+// AnalyzerEntry configures an external analyzer binary for a
+// specific language. Used in the analyzers section of .gaze.yaml.
+type AnalyzerEntry struct {
+	// Command is the analyzer binary name or path.
+	Command string `yaml:"command"`
+
+	// Args is the list of arguments to pass to the binary.
+	// Typically ["--stdio"].
+	Args []string `yaml:"args"`
+}
+
+// AnalyzersConfig maps language names to their analyzer
+// configurations. Example:
+//
+//	analyzers:
+//	  python:
+//	    command: snake-eyes
+//	    args: ["--stdio"]
+type AnalyzersConfig map[string]AnalyzerEntry
+
 // GazeConfig is the top-level configuration loaded from .gaze.yaml.
 type GazeConfig struct {
 	// Classification holds classification-related settings.
@@ -80,6 +100,11 @@ type GazeConfig struct {
 
 	// Baseline holds baseline comparison settings.
 	Baseline BaselineConfig `yaml:"baseline"`
+
+	// Analyzers maps language names to external analyzer binary
+	// configurations. Used by the three-tier discovery mechanism
+	// (CLI flag → config → PATH convention).
+	Analyzers AnalyzersConfig `yaml:"analyzers"`
 }
 
 // DefaultConfig returns a GazeConfig with sensible defaults.
